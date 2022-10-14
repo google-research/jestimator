@@ -1,0 +1,355 @@
+# Copyright 2022 The jestimator Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Modeling utilities."""
+import os
+from typing import Any, Callable, Mapping, Optional, Tuple
+
+from absl import logging
+from flax import struct
+from flax.core import FrozenDict
+from flax.core.frozen_dict import freeze, unfreeze  # pylint: disable=g-multiple-import
+import flax.linen as nn
+from flax.linen.partitioning import get_axis_names
+from flax.serialization import from_state_dict, to_state_dict  # pylint: disable=g-multiple-import
+from flax.traverse_util import empty_node, flatten_dict, unflatten_dict  # pylint: disable=g-multiple-import
+import jax
+import jax.numpy as jnp
+from jestimator import amos
+import optax
+from t5x.utils import get_local_data
+from tensorflow.io import gfile
+
+from flaxformer.types import Array, PRNGKey  # pylint: disable=g-multiple-import
+
+
+def extract_axes(variables: FrozenDict[str, Any]):
+  """Extract axes info from initialized variables."""
+  params = {}
+  params_axes_ = {}
+  vars_ = {}
+  vars_axes_ = {}
+  for k, v in variables.items():
+    if k == 'params':
+      params['params'] = v
+    elif k == 'params_axes':
+      params_axes_['params'] = get_axis_names(v)
+    elif k.endswith('_axes') and k[:-5] in variables:
+      vars_axes_[k[:-5]] = get_axis_names(v)
+    else:
+      vars_[k] = v
+  if 'params' not in params_axes_:
+    params_axes_['params'] = jax.tree_map(lambda _: None, params['params'])
+  for k, v in vars_.items():
+    if k not in vars_axes_:
+      vars_axes_[k] = jax.tree_map(lambda _: None, v)
+
+  params = FrozenDict(params)
+  params_axes_ = FrozenDict(params_axes_)
+  vars_ = FrozenDict(vars_)
+  vars_axes_ = FrozenDict(vars_axes_)
+  return params, params_axes_, vars_, vars_axes_
+
+
+class InferState(struct.PyTreeNode):
+  """State for inference, with support for partitioning.
+
+  Attributes:
+    apply_fn: Usually set to `model.apply()`.
+    params: Model parameters.
+  """
+  step: Array
+  apply_fn: Callable = struct.field(pytree_node=False)  # pylint: disable=g-bare-generic
+  ret: Any
+  params: FrozenDict[str, Any]
+  _params_axes: FrozenDict[str, Any] = struct.field(pytree_node=False)
+  _vars: FrozenDict[str, Any]
+  _vars_axes: FrozenDict[str, Any] = struct.field(pytree_node=False)
+
+  def variables(self, params: FrozenDict[str, Any]) -> FrozenDict[str, Any]:
+    return params.copy(self._vars)
+
+  @classmethod
+  def create(cls, model: nn.Module, *init_args, **init_kwargs) -> 'InferState':
+    """Creates a new state with model initialized."""
+    variables = model.init(jax.random.PRNGKey(0), *init_args, **init_kwargs)
+    params, params_axes_, vars_, vars_axes_ = extract_axes(variables)
+    return cls(
+        step=jnp.array(0),
+        apply_fn=model.apply,
+        ret=None,
+        params=params,
+        _params_axes=params_axes_,
+        _vars=vars_,
+        _vars_axes=vars_axes_,
+    )
+
+  def state_dict(self) -> Mapping[str, Any]:
+    """Returns a mutable representation of the state for checkpointing."""
+    return {'target': unfreeze(self.params), 'state': {'step': self.step}}
+
+  def restore_state(self, state_dict: Mapping[str, Any]) -> 'InferState':
+    """Restores the object state from a state dict."""
+    return self.replace(
+        step=get_local_data(state_dict['state']['step']),
+        params=freeze(state_dict['target']),
+    )
+
+  def as_logical_axes(self) -> 'InferState':
+    """Replaces `param` and `param-states` with their logical axis names."""
+    return self.replace(
+        step=None, params=self._params_axes, _vars=self._vars_axes)
+
+
+class TrainState(struct.PyTreeNode):
+  """Train state compatible with T5X partitioning and checkpointing.
+
+  Attributes:
+    step: Counter starts at 0 and is incremented by every call to
+      `.apply_gradients()`.
+    apply_fn: Usually set to `model.apply()`. Kept in this dataclass for
+      convenience to have a shorter params list for the `train_step()` function
+      in your training loop.
+    params: The parameters to be updated by `tx` and used by `apply_fn`.
+    tx: An Optax gradient transformation.
+    opt_state: The state for `tx`.
+  """
+  step: Array
+  apply_fn: Callable = struct.field(pytree_node=False)  # pylint: disable=g-bare-generic
+  params: FrozenDict[str, Any]
+  _params_axes: FrozenDict[str, Any] = struct.field(pytree_node=False)
+  _vars: FrozenDict[str, Any]
+  _vars_axes: FrozenDict[str, Any] = struct.field(pytree_node=False)
+  tx: optax.GradientTransformation = struct.field(pytree_node=False)
+  opt_state: optax.OptState
+  metrics_mod: nn.Module = struct.field(pytree_node=False)
+  _state_rng: PRNGKey = struct.field(pytree_node=False)
+
+  def variables(self, params: FrozenDict[str, Any]) -> FrozenDict[str, Any]:
+    return params.copy(self._vars)
+
+  def step_rng(self):
+    """Returns a PRNGKey with the current step folded in."""
+    ret = jax.random.fold_in(self._state_rng, self.step)
+    ret = jax.random.fold_in(ret, jax.process_index())
+    return ret
+
+  @classmethod
+  def create(cls, metrics_mod: nn.Module,
+             optimizer: optax.GradientTransformation, model: nn.Module,
+             rng: PRNGKey, *init_args, **init_kwargs) -> 'TrainState':
+    """Creates a new train state with model and optimizer initialized."""
+    init_rng, state_rng = jax.random.split(rng)
+    variables = model.init(init_rng, *init_args, **init_kwargs)
+    params, params_axes_, vars_, vars_axes_ = extract_axes(variables)
+    opt_state = optimizer.init(params)
+    return cls(
+        step=jnp.array(0),
+        apply_fn=model.apply,
+        params=params,
+        _params_axes=params_axes_,
+        _vars=vars_,
+        _vars_axes=vars_axes_,
+        tx=optimizer,
+        opt_state=opt_state,
+        metrics_mod=metrics_mod,
+        _state_rng=state_rng,
+    )
+
+  def apply_gradients(self, *, grads, **kwargs):
+    """Updates `step`, `params`, `opt_state` and `**kwargs` in return value.
+
+    Note that internally this function calls `.tx.update()` followed by a call
+    to `optax.apply_updates()` to update `params` and `opt_state`.
+
+    Args:
+      grads: Gradients that have the same pytree structure as `.params`.
+      **kwargs: Additional dataclass attributes that should be `.replace()`-ed.
+
+    Returns:
+      An updated instance of `self` with `step` incremented by one, `params`
+      and `opt_state` updated by applying `grads`, and additional attributes
+      replaced as specified by `kwargs`.
+    """
+    updates, new_opt_state = self.tx.update(grads, self.opt_state, self.params)
+    new_params = optax.apply_updates(self.params, updates)
+    return self.replace(
+        step=self.step + 1,
+        params=new_params,
+        opt_state=new_opt_state,
+        **kwargs,
+    )
+
+  def state_dict(self) -> Mapping[str, Any]:
+    """Returns a mutable representation of the state for checkpointing."""
+    param_states = to_state_dict(self.opt_state)
+    # To be compatible with t5x.optimizers.OptaxWrapper.state_dict(),
+    #  this step removes any empty dict (recursively) in the state dict.
+    param_states = unflatten_dict(flatten_dict(param_states))
+    return {
+        'target': unfreeze(self.params),
+        'state': {
+            'step': self.step,
+            'param_states': param_states,
+        }
+    }
+
+  def restore_state(self, state_dict: Mapping[str, Any]) -> 'TrainState':
+    """Restores the object state from a state dict."""
+    flat_x = flatten_dict(to_state_dict(self.opt_state), keep_empty_nodes=True)
+    flat_y = flatten_dict(state_dict['state']['param_states'])
+    # Adding the empty paths back to flat_y.
+    for k, v in flat_x.items():
+      if k in flat_y:
+        continue
+      # The key is not in the input state dict, presumably because it
+      # corresponds to an empty dict.
+      if v != empty_node:
+        raise ValueError(
+            f'Failed to restore optimizer state, path {k} is not present '
+            'in the input optimizer state dict.')
+      flat_y[k] = v
+    opt_state = from_state_dict(self.opt_state, unflatten_dict(flat_y))
+
+    return self.replace(
+        step=get_local_data(state_dict['state']['step']),
+        params=freeze(state_dict['target']),
+        opt_state=opt_state,
+    )
+
+  def as_logical_axes(self) -> 'TrainState':
+    """Replaces `param` and `param-states` with their logical axis names."""
+
+    def to_axes(x):
+      if isinstance(x, amos.ScaleByAmosState):
+        return amos.state_partition_rule(x, self._params_axes)
+
+      if isinstance(x, FrozenDict) and tuple(x.keys()) == ('params',):
+        return self._params_axes
+
+      return None
+
+    return self.replace(
+        step=None,
+        params=self._params_axes,
+        _vars=self._vars_axes,
+        opt_state=jax.tree_map(
+            to_axes, self.opt_state, is_leaf=lambda x: to_axes(x) is not None))
+
+
+class MeanMetric(nn.Module):
+  """A metric that accumulates total and count, returns total / count."""
+  name: str
+
+  def setup(self):
+    init_fn = lambda: jnp.array(0., jnp.float32)
+    self.total = self.variable('metrics', f'{self.name}_total', init_fn)
+    self.count = self.variable('metrics', f'{self.name}_count', init_fn)
+
+  def __call__(self):
+    return self.total.value / self.count.value
+
+  def update(self, dtotal, dcount=1.):
+    self.total.value = self.total.value + dtotal
+    self.count.value = self.count.value + dcount
+    return self()
+
+
+class MeanMetrics(nn.Module):
+  """A collection of metrics."""
+  coll: FrozenDict[str, MeanMetric]
+
+  @classmethod
+  def create(cls, *names: str):
+    return cls(FrozenDict({k: MeanMetric(k) for k in names}))
+
+  def __call__(self, name: Optional[str] = None):
+    if name is not None:
+      return self.coll[name]()
+
+    return FrozenDict({k: v() for k, v in self.coll.items()})
+
+  def update(self, name: str, dtotal, dcount=1.):
+    return self.coll[name].update(dtotal, dcount)
+
+
+class Evaluator(object):
+  """An evaluator that keeps all the results and evaluates in the end."""
+
+  def __init__(self, metrics: Mapping[str, Tuple[Callable, Callable]]):  # pylint: disable=g-bare-generic
+    """Creates an evaluator.
+
+    Args:
+      metrics: A mapping from `metric_name` to `(proc_fn, eval_fn)`, where
+        `proc_fn(infer)` processes the infer-step results and returns values to
+        be saved for metric, and `eval_fn(gold, infer)` returns the evaluation.
+    """
+    self._metrics = metrics
+
+  def reset_states(self):
+    self._gold = []
+    self._infers = {k: [] for k in self._metrics}
+
+  def update_state(self, gold, infer):
+    self._gold.extend(gold)
+    for k, (proc_fn, _) in self._metrics.items():
+      self._infers[k].extend(proc_fn(infer))
+
+  def result(self):
+    gold = self._gold
+    ret = {}
+    for k, (_, eval_fn) in self._metrics.items():
+      infer = self._infers[k]
+      assert len(gold) == len(infer)
+      ret[k] = eval_fn(gold, infer)
+    return ret
+
+
+class Predictor(object):
+  """A predictor that outputs prediction results."""
+
+  def __init__(
+      self,
+      proc_fn: Callable,  # pylint: disable=g-bare-generic
+      output_path: Optional[str] = None,
+      pre_str: Optional[str] = None,
+      post_str: Optional[str] = None):
+    """Creates a predictor.
+
+    Args:
+      proc_fn: Callable. `proc_fn(infer)` processes the infer-step results and
+        returns a string to output.
+      output_path: str. Path to output file or stdout if None.
+      pre_str: If not None, a string to print before all results.
+      post_str: If not None, a string to print after all results.
+    """
+    self._proc_fn = proc_fn
+    self._out_file = None
+    if output_path is not None:
+      logging.info('Writing predictions to %s', output_path)
+      gfile.makedirs(os.path.dirname(output_path))
+      self._out_file = gfile.GFile(output_path, 'w')
+    if pre_str is not None:
+      print(pre_str, file=self._out_file)
+    self._post_str = post_str
+
+  def consume(self, infer):
+    for x in self._proc_fn(infer):
+      print(x, file=self._out_file)
+
+  def complete(self):
+    if self._post_str is not None:
+      print(self._post_str, file=self._out_file)
+    if self._out_file is not None:
+      self._out_file.close()
