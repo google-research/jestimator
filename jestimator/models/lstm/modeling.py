@@ -22,7 +22,9 @@ import jax
 import jax.numpy as jnp
 from jestimator.modeling import global_kwargs, sparse_xe_with_logits, normalize_loss_by_size, unstack, truncated_normal_initializer, Dropout  # pylint: disable=g-multiple-import
 
-from flaxformer.types import Array, Shape, DType  # pylint: disable=g-multiple-import
+from flaxformer.types import Array, DType  # pylint: disable=g-multiple-import
+
+Shape = Tuple[int, ...]
 
 
 @dataclasses.dataclass
@@ -244,7 +246,8 @@ def get_eta_fn(config: ModelConfig):
   hidden_size = config.hidden_size
   memory_size = config.memory_size
 
-  def eta_fn(name: Tuple[str, ...]):
+  def eta_fn(name: Tuple[str, ...], shape: Shape) -> Array:
+    del shape  # Unused.
     if name[-4:] == ('lstm', 'cell', 'core', 'kernel'):
       return math.pow(2 * hidden_size, -0.25)
 
@@ -273,7 +276,7 @@ def get_shape_fn(config):
   """Get the `shape_fn` function for Amos optimizer."""
   del config  # Unused.
 
-  def shape_fn(name: Tuple[str, ...], shape: Tuple[int, ...]):
+  def shape_fn(name: Tuple[str, ...], shape: Shape) -> Shape:
     if name[-1] == 'kernel':
       assert len(shape) >= 2
       return (1,) + shape[1:]

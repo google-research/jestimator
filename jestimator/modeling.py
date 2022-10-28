@@ -15,7 +15,7 @@
 """Modeling utilities."""
 import inspect
 import threading
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Optional, Tuple
 
 from flax import linen as nn
 import jax
@@ -78,7 +78,7 @@ def unstack(x, axis):
 _thread_local = threading.local()
 
 
-def global_kwargs(*inherits: Sequence[str], pass_down: bool = False):
+def global_kwargs(*inherits: str, pass_down: bool = False):
   """Function decorator to use global kwargs.
 
   A utility for passing keyword arguments down to nested sub-calls.

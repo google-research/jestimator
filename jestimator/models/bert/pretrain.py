@@ -30,8 +30,7 @@ from jestimator.states import TrainState, MeanMetrics  # pylint: disable=g-multi
 import ml_collections
 from ml_collections.config_dict import config_dict
 import optax
-from seqio import FeatureConverter
-from seqio.feature_converters import non_padding_position
+import seqio
 import tensorflow as tf
 
 
@@ -64,7 +63,7 @@ def get_config():
   return module_config
 
 
-class PackOrPadConverter(FeatureConverter):
+class PackOrPadConverter(seqio.FeatureConverter):
   """A feature converter that only packs or pads features.
 
   Example: a packed dataset.
@@ -80,17 +79,19 @@ class PackOrPadConverter(FeatureConverter):
     }
   Note that two examples are packed together into one example.
   """
-  TASK_FEATURES = {'targets': FeatureConverter.FeatureSpec(dtype=tf.int32)}
+  TASK_FEATURES = {
+      'targets': seqio.FeatureConverter.FeatureSpec(dtype=tf.int32)
+  }
   MODEL_FEATURES = {
-      'targets': FeatureConverter.FeatureSpec(dtype=tf.int32),
-      'input_mask': FeatureConverter.FeatureSpec(dtype=tf.bool)
+      'targets': seqio.FeatureConverter.FeatureSpec(dtype=tf.int32),
+      'input_mask': seqio.FeatureConverter.FeatureSpec(dtype=tf.bool)
   }
   PACKING_FEATURE_DTYPES = {}
 
   def _convert_example(
       self, features: Mapping[str, tf.Tensor]) -> Mapping[str, tf.Tensor]:
     targets = features['targets']
-    input_mask = non_padding_position(targets, tf.bool)
+    input_mask = seqio.non_padding_position(targets, tf.bool)
     d = {'targets': targets, 'input_mask': input_mask}
     return d
 
@@ -190,15 +191,14 @@ def get_train_state(config, rng) -> TrainState:
 
 def train_step(config, train_batch, state: TrainState, metrics):
   """Training step."""
-  (loss, size), grads = jax.value_and_grad(
-      state.apply_fn, has_aux=True)(
-          state.params,
-          train_batch['targets'],
-          config.mask_token_id,
-          mask_rate=config.mask_rate,
-          input_mask=train_batch.get('input_mask'),
-          enable_dropout=True,
-          method=modeling.ModelForPretrain.mlm_train_loss)
+  (loss, size), grads = state.value_and_grad_apply_fn(has_aux=True)(
+      state.params,
+      train_batch['targets'],
+      config.mask_token_id,
+      mask_rate=config.mask_rate,
+      input_mask=train_batch.get('input_mask'),
+      enable_dropout=True,
+      method=modeling.ModelForPretrain.mlm_train_loss)
   _, metrics = state.metrics_mod.apply(
       metrics,
       'train_loss',
@@ -215,7 +215,7 @@ def valid_step(config, valid_batch, state: TrainState, metrics):
   def body(i, metrics):
     del i  # Unused.
     loss, mrr, size = state.apply_fn(
-        state.params,
+        state.variables(),
         valid_batch['targets'],
         config.mask_token_id,
         mask_rate=config.mask_rate,
@@ -247,7 +247,7 @@ def monitor_train(config, state: TrainState, tb_writer, metrics):
   with tb_writer.as_default():
     for k, v in flatten_dict(state.params, sep='/').items():
       r = jnp.sqrt(jnp.mean(jnp.square(v))).block_until_ready()
-      tf.summary.scalar(k, r, step=step)
+      tf.summary.scalar(f'params_scale/{k}', r, step=step)
     for k, v in state.metrics_mod.apply(metrics).items():
       logging.info('%s at step %d: %f', k, step, v)
       tf.summary.scalar(f'train/{k}', v, step=step)

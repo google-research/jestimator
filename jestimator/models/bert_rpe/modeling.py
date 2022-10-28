@@ -27,6 +27,8 @@ from flaxformer.components.dense import DenseGeneral
 from flaxformer.components.embedding import Embed
 from flaxformer.types import Array
 
+Shape = Tuple[int, ...]
+
 
 @dataclasses.dataclass
 class ModelConfig:
@@ -486,7 +488,8 @@ def get_eta_fn(config: ModelConfig):
   mlp_size = config.mlp_size
   hidden_size = config.hidden_size
 
-  def eta_fn(name: Tuple[str, ...]):
+  def eta_fn(name: Tuple[str, ...], shape: Shape) -> Array:
+    del shape  # Unused.
     if name[-2:] == ('layer_norm', 'scale'):
       return 1.0
 
@@ -511,7 +514,7 @@ def get_shape_fn(config):
   """Get the `shape_fn` function for Amos optimizer."""
   del config  # Unused.
 
-  def shape_fn(name: Tuple[str, ...], shape: Tuple[int, ...]):
+  def shape_fn(name: Tuple[str, ...], shape: Shape) -> Shape:
     if name[-1] == 'kernel':
       assert len(shape) == 2
       return (1, shape[1])

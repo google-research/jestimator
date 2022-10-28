@@ -23,17 +23,17 @@ In order to be effective, AMOS requires each trainable variable to provide an
 trained variable converge to. `eta` is used in a variable-specific learning-rate
 schedule.
 """
-from typing import Callable, NamedTuple, Optional, Tuple, Union
+from typing import Any, Callable, NamedTuple, Optional, Tuple, Union
 
 import chex
 from flax.serialization import from_state_dict, to_state_dict  # pylint: disable=g-multiple-import
 from flax.traverse_util import empty_node, flatten_dict, unflatten_dict  # pylint: disable=g-multiple-import
 import jax
-from jax.experimental.pjit import PartitionSpec
 import jax.numpy as jnp
 import optax
 
 ScalarOrSchedule = Union[float, optax.Schedule]
+ParamsFn = Callable[[Tuple[str, ...], Tuple[int, ...]], Any]
 
 
 class ScaleByAmosState(NamedTuple):
@@ -53,44 +53,15 @@ def default_decay_factor_d(b: chex.Array, init_lr: chex.Array) -> chex.Array:
 
 def scale_by_amos(
     learning_rate: ScalarOrSchedule,
-    eta_fn: Callable[Tuple[str, ...], chex.Array],
-    shape_fn: Optional[Callable[Tuple[str, ...], Tuple[int, ...]]] = None,
-    init_b_fn: Optional[Callable[Tuple[str, ...], chex.Array]] = None,
+    eta_fn: ParamsFn,
+    shape_fn: Optional[ParamsFn] = None,
+    init_b_fn: Optional[ParamsFn] = None,
     beta: float = 0.999,
     epsilon: float = 1. / (1 << 125),
     c: Callable[[chex.Array, chex.Array], chex.Array] = default_decay_factor_c,
     d: Callable[[chex.Array, chex.Array], chex.Array] = default_decay_factor_d,
 ) -> optax.GradientTransformation:
-  """Rescale updates according to the Amos algorithm.
-
-  References:
-    [The Amos Doc](go/amos)
-
-  Args:
-    learning_rate: A float or callable for learning rate. When it is callable,
-      the `leaning_rate` takes step count as input and returns a float scalar.
-      Let N be the number of independent batches in the training data. It is
-      recommended to set the learning rate to about 1/sqrt(N).
-    eta_fn: A function that maps a variable name to the variable-specific
-      hyper-parameter 'eta' which indicates the expected scale of entries.
-    shape_fn: A function that maps a variable name and shape to the shape of the
-      corresponding slot variables `v` and `b`. The returned shape should be
-      broadcastable to the varialbe, while some axes might be reduced to 1 to
-      save memory.
-    init_b_fn: A function that maps a variable name to the initial value of the
-      slot variable `b`. By default this is set to 0; for pre-trained variables
-      restored from another checkpoint, one can set the initial value to a large
-      constant (approximately in proportion to the pre-trained epochs), in order
-      to prevent catastrophic forgetting.
-    beta: A float slightly < 1. We recommend setting `1 - beta` to the same
-      order of magnitude as the learning rate. Defaults to 0.999.
-    epsilon: The smallest positive normal to prevent division by 0.
-    c: A function to calculate the decay factor c for L2-regularization.
-    d: A function to calculate the decay factor d for learning-rate.
-
-  Returns:
-    An (init_fn, update_fn) tuple.
-  """
+  """Rescale updates according to the Amos algorithm."""
 
   def init_fn(params):
     flat_v = {}
@@ -111,7 +82,7 @@ def scale_by_amos(
       if init_b_fn is None:
         b = jnp.zeros_like(v)
       else:
-        b = jnp.ones_like(v) * init_b_fn(name)
+        b = jnp.ones_like(v) * init_b_fn(name, theta.shape)
       flat_b[name] = b
 
     v = from_state_dict(params, _unflatten(flat_v))
@@ -144,7 +115,7 @@ def scale_by_amos(
 
       b = flat_b[name]
       gamma = c(b, xi) * jnp.square(xi) * rcpl_v_hat * g2
-      init_lr = xi * eta_fn(name)
+      init_lr = xi * eta_fn(name, theta.shape)
       flat_grad[name] = d(b, init_lr) * (
           -init_lr * jnp.sqrt(rcpl_v_hat) * grad - 0.5 * gamma * theta)
       flat_b[name] = b + gamma * (1. + b)
@@ -173,9 +144,9 @@ def _unflatten(x):
 
 def amos(
     learning_rate: ScalarOrSchedule,
-    eta_fn: Callable[Tuple[str, ...], chex.Array],
-    shape_fn: Optional[Callable[Tuple[str, ...], Tuple[int, ...]]] = None,
-    init_b_fn: Optional[Callable[Tuple[str, ...], chex.Array]] = None,
+    eta_fn: ParamsFn,
+    shape_fn: Optional[ParamsFn] = None,
+    init_b_fn: Optional[ParamsFn] = None,
     beta: float = 0.999,
     momentum: Optional[float] = None,
     clip_value: Optional[float] = None,
@@ -186,24 +157,24 @@ def amos(
   """The full Amos optimizer with optional gradient clipping and momentum.
 
   References:
-    [The Amos Doc](go/amos)
+    [The Amos Paper](https://arxiv.org/abs/2210.11693)
 
   Args:
     learning_rate: A float or callable for learning rate. When it is callable,
       the `leaning_rate` takes step count as input and returns a float scalar.
       Let N be the number of independent batches in the training data. It is
       recommended to set the learning rate to about 1/sqrt(N).
-    eta_fn: A function that maps a variable name to the variable-specific
-      hyper-parameter 'eta' which indicates the expected scale of entries.
-    shape_fn: A function that maps a variable name to the shape of the
+    eta_fn: A function that maps a variable name and shape to the variable-
+      specific hyper-parameter 'eta' indicating the expected scale of entries.
+    shape_fn: A function that maps a variable name and shape to the shape of the
       corresponding slot variables `v` and `b`. The returned shape should be
       broadcastable to the varialbe, while some axes might be reduced to 1 to
       save memory.
-    init_b_fn: A function that maps a variable name to the initial value of the
-      slot variable `b`. By default this is set to 0; for pre-trained variables
-      restored from another checkpoint, one can set the initial value to a large
-      constant (approximately in proportion to the pre-trained epochs), in order
-      to prevent catastrophic forgetting.
+    init_b_fn: A function that maps a variable name and shape to the initial
+      value of the slot variable `b`. By default this is set to 0; for pre-
+      trained variables restored from another checkpoint, one can set the
+      initial value to a large constant (approximately in proportion to pre-
+      trained epochs), in order to prevent catastrophic forgetting.
     beta: A float slightly < 1. We recommend setting `1 - beta` to the same
       order of magnitude as the learning rate. Defaults to 0.999.
     momentum: Exponential decay rate for optional moving average of updates.
@@ -230,25 +201,7 @@ def amos(
           d=d))
   if momentum is not None and momentum > 0.:
     tx.append(optax.ema(momentum, debias=False))
-  return optax.chain(*tx)
 
-
-def maybe_reduce_axis_names(var, axes):
-  """Prepend 'reduced_' to the axis name if a dimension is 1."""
-  if not var.shape:  # Scalar.
-    return None
-
-  if axes is None:  # No axes info.
-    return None
-
-  assert len(var.shape) == len(axes), f'shape: {var.shape} axis: {axes}'
-  names = [(f'reduced_{x}' if d == 1 else x) for d, x in zip(var.shape, axes)]
-  return PartitionSpec(*names)
-
-
-def state_partition_rule(state: ScaleByAmosState, params_axes):
-  """Creates partition for Amos states from partition of parameters."""
-  return ScaleByAmosState(
-      count=None,
-      v=jax.tree_map(maybe_reduce_axis_names, state.v, params_axes),
-      b=jax.tree_map(maybe_reduce_axis_names, state.b, params_axes))
+  if len(tx) >= 2:
+    return optax.chain(*tx)
+  return tx[0]

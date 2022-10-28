@@ -2,7 +2,7 @@
 
 *This is not an officially supported Google product.*
 
-This is the source code for the paper "Amos: An Adam-style Optimizer with Adaptive Weight Decay towards Model-Oriented Scale".
+This is the source code for the paper "[Amos: An Adam-style Optimizer with Adaptive Weight Decay towards Model-Oriented Scale](https://arxiv.org/abs/2210.11693)".
 
 It implements __Amos__, an optimizer compatible with the [optax](https://github.com/deepmind/optax) library, and __JEstimator__, a light-weight library with a `tf.Estimator`-like interface to manage [T5X](https://github.com/google-research/t5x)-compatible checkpoints for machine learning programs in [Jax](https://github.com/google/jax), which we use to run experiments in the paper.
 

@@ -52,7 +52,7 @@ class AmosTest(absltest.TestCase):
   def test_parabola(self):
     opt = amos.amos(
         learning_rate=1.0,
-        eta_fn=lambda name: 1.0,
+        eta_fn=lambda name, shape: 1.0,
         shape_fn=lambda name, shape: ())
     initial_params, final_params, get_updates = _setup_parabola(jnp.float32)
 
@@ -75,7 +75,7 @@ class AmosTest(absltest.TestCase):
   def test_rosenbrock(self):
     opt = amos.amos(
         learning_rate=0.5,
-        eta_fn=lambda name: 1.0,
+        eta_fn=lambda name, shape: 1.0,
         shape_fn=lambda name, shape: (),
         beta=0.5,
         clip_value=1.0,

@@ -164,15 +164,14 @@ def train_step(config, train_batch, state: TrainState, metrics):
   loss_fn = (
       modeling.ModelForSeqCls.mse_loss
       if config.stsb else modeling.ModelForSeqCls.xe_loss)
-  (loss, size), grads = jax.value_and_grad(
-      state.apply_fn, has_aux=True)(
-          state.params,
-          train_batch['label'],
-          train_batch['input_ids'],
-          segment_ids=train_batch['segment_ids'],
-          input_mask=train_batch['input_mask'],
-          enable_dropout=True,
-          method=loss_fn)
+  (loss, size), grads = state.value_and_grad_apply_fn(has_aux=True)(
+      state.params,
+      train_batch['label'],
+      train_batch['input_ids'],
+      segment_ids=train_batch['segment_ids'],
+      input_mask=train_batch['input_mask'],
+      enable_dropout=True,
+      method=loss_fn)
   _, metrics = state.metrics_mod.apply(
       metrics,
       'train_loss',
@@ -189,7 +188,7 @@ def valid_step(config, valid_batch, state: TrainState, metrics):
       modeling.ModelForSeqCls.mse_loss
       if config.stsb else modeling.ModelForSeqCls.xe_loss)
   loss, size = state.apply_fn(
-      state.params,
+      state.variables(),
       valid_batch['label'],
       valid_batch['input_ids'],
       segment_ids=valid_batch['segment_ids'],
@@ -212,7 +211,7 @@ def monitor_train(config, state: TrainState, tb_writer, metrics):
   with tb_writer.as_default():
     for k, v in flatten_dict(state.params, sep='/').items():
       r = jnp.sqrt(jnp.mean(jnp.square(v))).block_until_ready()
-      tf.summary.scalar(k, r, step=step)
+      tf.summary.scalar(f'params_scale/{k}', r, step=step)
     for k, v in state.metrics_mod.apply(metrics).items():
       logging.info('%s at step %d: %f', k, step, v)
       tf.summary.scalar(f'train/{k}', v, step=step)
@@ -228,7 +227,7 @@ def get_infer_state(config):
 def infer_step(config, batch, state: InferState) -> InferState:
   """Infer step."""
   logits = state.apply_fn(
-      state.params,
+      state.variables(),
       batch['input_ids'],
       segment_ids=batch['segment_ids'],
       input_mask=batch['input_mask'])

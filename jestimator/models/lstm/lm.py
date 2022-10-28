@@ -187,18 +187,11 @@ def get_train_state(config, rng) -> TrainState:
 
 def train_step(config, train_batch, state: TrainState, metrics):
   """Training step."""
-
-  def func(params):
-    (loss, size), vars_ = state.apply_fn(
-        state.variables(params),
-        train_batch,
-        state.step % config.train_consecutive != 0,
-        enable_dropout=True,
-        mutable=['context'])
-    return loss, (size, vars_)
-
-  func_and_grad = jax.value_and_grad(func, has_aux=True)
-  (loss, (size, vars_)), grads = func_and_grad(state.params)
+  (loss, (size, vars_)), grads = state.value_and_grad_apply_fn(has_aux=True)(
+      state.params,
+      train_batch,
+      state.step % config.train_consecutive != 0,
+      enable_dropout=True)
   _, metrics = state.metrics_mod.apply(
       metrics,
       'train_loss',
@@ -218,7 +211,7 @@ def monitor_train(config, state: TrainState, tb_writer, metrics):
   with tb_writer.as_default():
     for k, v in flatten_dict(state.params, sep='/').items():
       r = jnp.sqrt(jnp.mean(jnp.square(v))).block_until_ready()
-      tf.summary.scalar(k, r, step=step)
+      tf.summary.scalar(f'params_scale/{k}', r, step=step)
     for k, v in state.metrics_mod.apply(metrics).items():
       logging.info('%s at step %d: %f', k, step, v)
       tf.summary.scalar(f'train/{k}', v, step=step)
@@ -236,12 +229,12 @@ def infer_step(config, batch, state: InferState) -> InferState:
   """Infer step."""
   if config.mode.startswith('eval'):
     (loss, mrr, size), vars_ = state.apply_fn(
-        state.variables(state.params),
+        state.variables(),
         batch['y'],
         True,
         mode=config.mode,
         length=batch['length'],
-        mutable=['context'])
+        mutable=state.mutable())
 
     return state.replace(
         _vars=vars_,
@@ -250,6 +243,8 @@ def infer_step(config, batch, state: InferState) -> InferState:
             'mrr': jnp.expand_dims(mrr, 0),
             'size': jnp.expand_dims(size, 0),
         })
+
+  raise NotImplementedError(f'Infer-step for {config.mode} not implemented.')
 
 
 class Evaluator(object):

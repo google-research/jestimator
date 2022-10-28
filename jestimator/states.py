@@ -26,7 +26,8 @@ from flax.serialization import from_state_dict, to_state_dict  # pylint: disable
 from flax.traverse_util import empty_node, flatten_dict, unflatten_dict  # pylint: disable=g-multiple-import
 import jax
 import jax.numpy as jnp
-from jestimator import amos
+from jestimator import amos_helper
+from jestimator.amos import ScaleByAmosState
 import optax
 from t5x.utils import get_local_data
 from tensorflow.io import gfile
@@ -59,16 +60,11 @@ def extract_axes(variables: FrozenDict[str, Any]):
   params_axes_ = FrozenDict(params_axes_)
   vars_ = FrozenDict(vars_)
   vars_axes_ = FrozenDict(vars_axes_)
-  return params, params_axes_, vars_, vars_axes_
+  return params['params'], params_axes_['params'], vars_, vars_axes_
 
 
 class InferState(struct.PyTreeNode):
-  """State for inference, with support for partitioning.
-
-  Attributes:
-    apply_fn: Usually set to `model.apply()`.
-    params: Model parameters.
-  """
+  """State for inference, with support for partitioning."""
   step: Array
   apply_fn: Callable = struct.field(pytree_node=False)  # pylint: disable=g-bare-generic
   ret: Any
@@ -77,8 +73,13 @@ class InferState(struct.PyTreeNode):
   _vars: FrozenDict[str, Any]
   _vars_axes: FrozenDict[str, Any] = struct.field(pytree_node=False)
 
-  def variables(self, params: FrozenDict[str, Any]) -> FrozenDict[str, Any]:
-    return params.copy(self._vars)
+  def variables(self, params: Optional[FrozenDict[str, Any]] = None):
+    if params is None:
+      params = self.params
+    return self._vars.copy({'params': params})
+
+  def mutable(self):
+    return self._vars.keys()
 
   @classmethod
   def create(cls, model: nn.Module, *init_args, **init_kwargs) -> 'InferState':
@@ -136,8 +137,33 @@ class TrainState(struct.PyTreeNode):
   metrics_mod: nn.Module = struct.field(pytree_node=False)
   _state_rng: PRNGKey = struct.field(pytree_node=False)
 
-  def variables(self, params: FrozenDict[str, Any]) -> FrozenDict[str, Any]:
-    return params.copy(self._vars)
+  def variables(self, params: Optional[FrozenDict[str, Any]] = None):
+    if params is None:
+      params = self.params
+    return self._vars.copy({'params': params})
+
+  def mutable(self):
+    return self._vars.keys()
+
+  def value_and_grad_apply_fn(self, has_aux: bool = False):
+    mutable = self.mutable()
+
+    def fn(params, *args, **kwargs):
+      ret, vars_ = self.apply_fn(
+          self.variables(params), *args, **kwargs, mutable=mutable)
+      if has_aux:
+        assert isinstance(ret, Tuple)
+
+      if mutable:
+        if has_aux:
+          return ret[0], ret[1:] + (vars_,)
+        return ret, vars_
+
+      if has_aux and len(ret) >= 3:
+        return ret[0], ret[1:]
+      return ret
+
+    return jax.value_and_grad(fn, has_aux=has_aux or mutable)
 
   def step_rng(self):
     """Returns a PRNGKey with the current step folded in."""
@@ -230,12 +256,13 @@ class TrainState(struct.PyTreeNode):
 
   def as_logical_axes(self) -> 'TrainState':
     """Replaces `param` and `param-states` with their logical axis names."""
+    params_keys = self.params.keys()
 
     def to_axes(x):
-      if isinstance(x, amos.ScaleByAmosState):
-        return amos.state_partition_rule(x, self._params_axes)
+      if isinstance(x, ScaleByAmosState):
+        return amos_helper.state_partition_rule(x, self._params_axes)
 
-      if isinstance(x, FrozenDict) and tuple(x.keys()) == ('params',):
+      if isinstance(x, FrozenDict) and x.keys() == params_keys:
         return self._params_axes
 
       return None
@@ -250,12 +277,12 @@ class TrainState(struct.PyTreeNode):
 
 class MeanMetric(nn.Module):
   """A metric that accumulates total and count, returns total / count."""
-  name: str
+  metric_name: str
 
   def setup(self):
     init_fn = lambda: jnp.array(0., jnp.float32)
-    self.total = self.variable('metrics', f'{self.name}_total', init_fn)
-    self.count = self.variable('metrics', f'{self.name}_count', init_fn)
+    self.total = self.variable('metrics', f'{self.metric_name}_total', init_fn)
+    self.count = self.variable('metrics', f'{self.metric_name}_count', init_fn)
 
   def __call__(self):
     return self.total.value / self.count.value

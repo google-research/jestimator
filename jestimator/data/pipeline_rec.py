@@ -20,7 +20,7 @@ import tensorflow as tf
 
 def pipeline_from_filenames(
     filenames: Sequence[str],
-    dataset_fn: Optional[Callable[str, tf.data.Dataset]] = None,
+    dataset_fn: Optional[Callable[[str], tf.data.Dataset]] = None,
     cache: bool = False,
     feature_fn: Optional[Callable] = None,  # pylint: disable=g-bare-generic
     interleave: bool = False,
@@ -103,7 +103,7 @@ def pipeline_from_filenames(
 
 
 def rec_data(
-    dataset_fn: Optional[Callable[str, tf.data.Dataset]] = None,
+    dataset_fn: Optional[Callable[[str], tf.data.Dataset]] = None,
     cache: bool = False,
     feature_fn: Optional[Callable] = None,  # pylint: disable=g-bare-generic
     interleave: bool = False):

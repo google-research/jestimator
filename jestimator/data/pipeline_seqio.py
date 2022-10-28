@@ -21,7 +21,7 @@ SEQIO_PREFIX = "seqio://"
 
 
 def is_seqio(filenames: Optional[Sequence[str]]) -> bool:
-  return filenames and filenames[0].startswith(SEQIO_PREFIX)
+  return bool(filenames and filenames[0].startswith(SEQIO_PREFIX))
 
 
 def pipeline_from_mixture_or_task_name(

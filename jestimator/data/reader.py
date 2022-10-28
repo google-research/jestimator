@@ -63,6 +63,8 @@ def get_record_dataset(
     d = tf.data.TFRecordDataset(path)
     return d
 
+  raise TypeError(f'Unknown file format: {path}')
+
 
 def get_tfds_dataset(path: str) -> tf.data.Dataset:
   """Creates a tensorflow dataset from path."""

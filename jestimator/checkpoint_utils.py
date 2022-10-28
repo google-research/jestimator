@@ -18,7 +18,6 @@ import time
 from typing import Any, List, Mapping, Optional, Tuple, Union
 
 from absl import logging
-from flax import struct
 from flax.core.frozen_dict import freeze
 from flax.training import checkpoints
 from flax.traverse_util import flatten_dict, unflatten_dict  # pylint: disable=g-multiple-import
@@ -28,9 +27,9 @@ from t5x.utils import get_local_data
 from tensorflow.io import gfile
 
 
-def partial_restore(state: struct.PyTreeNode,
+def partial_restore(state,
                     ckpt_dict: Mapping[str, Any],
-                    load_step: bool = False) -> struct.PyTreeNode:
+                    load_step: bool = False):
   """Partially restore from checkpoint."""
   flat_x = flatten_dict(state.params)
   flat_y = flatten_dict(ckpt_dict['target'])

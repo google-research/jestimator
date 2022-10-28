@@ -22,7 +22,7 @@ def pipeline_from_filenames(
     filenames: Sequence[str],
     seq_length: int,
     allow_remainder: bool = False,
-    dataset_fn: Optional[Callable[str, tf.data.Dataset]] = None,
+    dataset_fn: Optional[Callable[[str], tf.data.Dataset]] = None,
     cache: bool = False,
     random_skip: bool = False,
     feature_fn: Optional[Callable] = None,  # pylint: disable=g-bare-generic
@@ -102,7 +102,7 @@ def pipeline_from_filenames(
 def lm_data(
     seq_length: int,
     allow_remainder: bool = False,
-    dataset_fn: Optional[Callable[str, tf.data.Dataset]] = None,
+    dataset_fn: Optional[Callable[[str], tf.data.Dataset]] = None,
     cache: bool = False,
     random_skip: bool = False,
     feature_fn: Optional[Callable] = None,  # pylint: disable=g-bare-generic

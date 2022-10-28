@@ -28,6 +28,8 @@ from flaxformer.components.dense import DenseGeneral
 from flaxformer.components.embedding import Embed
 from flaxformer.types import Array
 
+Shape = Tuple[int, ...]
+
 
 @dataclasses.dataclass
 class ModelConfig:
@@ -193,22 +195,20 @@ class AttentionLayer(nn.Module):
         kernel_axis_names=('embed', 'heads', 'kv'))
     self.dropout = Dropout(rate=config.attention_dropout_rate)
 
-  @global_kwargs('attention_target', 'attention_mask', 'use_rotary', 'rotaries')
+  @global_kwargs('attention_target', 'attention_mask', 'rotaries')
   def __call__(self,
                x: Array,
                attention_target: Optional[Array] = None,
                attention_mask: Optional[Array] = None,
-               use_rotary: Optional[bool] = None,
                rotaries: Optional[Tuple[Array, Array]] = None) -> Array:
     query = self.query(x)
-    if use_rotary is None:
-      use_rotary = (attention_target is None)
+    use_rotary = (attention_target is None)
     if attention_target is None:
       attention_target = x
     key = self.key(attention_target)
     value = self.value(attention_target)
 
-    if use_rotary:
+    if use_rotary and rotaries is not None:
       # use rotary embeddings before attention
       # https://arxiv.org/abs/2104.09864
       sin, cos = rotaries
@@ -447,7 +447,8 @@ def get_eta_fn(config: ModelConfig):
   mlp_size = config.mlp_size
   hidden_size = config.hidden_size
 
-  def eta_fn(name: Tuple[str, ...]):
+  def eta_fn(name: Tuple[str, ...], shape: Shape) -> Array:
+    del shape  # Unused.
     if name[-2:] == ('layer_norm', 'scale'):
       return 1.0
 
@@ -469,7 +470,7 @@ def get_shape_fn(config):
   """Get the `shape_fn` function for Amos optimizer."""
   del config  # Unused.
 
-  def shape_fn(name: Tuple[str, ...], shape: Tuple[int, ...]):
+  def shape_fn(name: Tuple[str, ...], shape: Shape) -> Shape:
     if name[-1] == 'kernel':
       assert len(shape) == 2
       return (1, shape[1])

@@ -169,12 +169,11 @@ def get_train_state(config, rng):
 def train_step(config, train_batch, state: TrainState, metrics):
   """Training step."""
   del config  # Unused.
-  (loss, size), grads = jax.value_and_grad(
-      state.apply_fn, has_aux=True)(
-          state.params,
-          train_batch['x'],
-          train_batch['y'],
-          method=LinearRegression.mse)
+  (loss, size), grads = state.value_and_grad_apply_fn(has_aux=True)(
+      state.params,
+      train_batch['x'],
+      train_batch['y'],
+      method=LinearRegression.mse)
   _, metrics = state.metrics_mod.apply(
       metrics,
       'train_loss',
@@ -189,7 +188,7 @@ def valid_step(config, valid_batch, state: TrainState, metrics):
   """Validation step."""
   del config  # Unused.
   loss, size = state.apply_fn(
-      state.params,
+      state.variables(),
       valid_batch['x'],
       valid_batch['y'],
       method=LinearRegression.mse)
@@ -210,7 +209,7 @@ def monitor_train(config, state: TrainState, tb_writer, metrics):
   with tb_writer.as_default():
     for k, v in flatten_dict(state.params, sep='/').items():
       r = jnp.sqrt(jnp.mean(jnp.square(v))).block_until_ready()
-      tf.summary.scalar(k, r, step=step)
+      tf.summary.scalar(f'params_scale/{k}', r, step=step)
     for k, v in state.metrics_mod.apply(metrics).items():
       logging.info('%s at step %d: %f', k, step, v)
       tf.summary.scalar(f'train/{k}', v, step=step)
@@ -226,7 +225,7 @@ def get_infer_state(config):
 def infer_step(config, batch, state: InferState):
   """Infer step."""
   del config  # Unused.
-  return state.replace(ret=state.apply_fn(state.params, batch))
+  return state.replace(ret=state.apply_fn(state.variables(), batch))
 
 
 def get_evaluator(config) -> Evaluator:
