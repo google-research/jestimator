@@ -36,31 +36,39 @@ from flaxformer.types import Array, PRNGKey  # pylint: disable=g-multiple-import
 
 
 def extract_axes(variables: FrozenDict[str, Any]):
-  """Extract axes info from initialized variables."""
-  params = {}
-  params_axes_ = {}
+  """Extract axes info from initialized variables.
+
+  Args:
+    variables: The variables returned by model.init().
+
+  Returns:
+    Split the variables dict into 4 parts: `params`, the trainable model
+      parameter; `params_axes`, the axes info for params (if any); `vars_`,
+      other mutable variables in the model (if any); and `vars_axes_`, the axes
+      info for vars_ (if any).
+  """
+  params = None
+  params_axes_ = None
   vars_ = {}
   vars_axes_ = {}
   for k, v in variables.items():
     if k == 'params':
-      params['params'] = v
+      params = v
     elif k == 'params_axes':
-      params_axes_['params'] = get_axis_names(v)
-    elif k.endswith('_axes') and k[:-5] in variables:
-      vars_axes_[k[:-5]] = get_axis_names(v)
+      params_axes_ = get_axis_names(v)
+    elif k.endswith('_axes') and k[:-len('_axes')] in variables:
+      vars_axes_[k[:-len('_axes')]] = get_axis_names(v)
     else:
       vars_[k] = v
-  if 'params' not in params_axes_:
-    params_axes_['params'] = jax.tree_map(lambda _: None, params['params'])
+  if params_axes_ is None:
+    params_axes_ = jax.tree_map(lambda _: None, params)
   for k, v in vars_.items():
     if k not in vars_axes_:
       vars_axes_[k] = jax.tree_map(lambda _: None, v)
 
-  params = FrozenDict(params)
-  params_axes_ = FrozenDict(params_axes_)
   vars_ = FrozenDict(vars_)
   vars_axes_ = FrozenDict(vars_axes_)
-  return params['params'], params_axes_['params'], vars_, vars_axes_
+  return params, params_axes_, vars_, vars_axes_
 
 
 class InferState(struct.PyTreeNode):
