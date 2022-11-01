@@ -43,23 +43,15 @@ class ScaleByAmosState(NamedTuple):
   b: optax.Updates
 
 
-def default_decay_factor_c(b: chex.Array, xi: chex.Array) -> chex.Array:
-  return jax.lax.rsqrt(1. + 0.25 * jnp.sqrt(xi) * b)
-
-
-def default_decay_factor_d(b: chex.Array, init_lr: chex.Array) -> chex.Array:
-  return jnp.reciprocal(1. + 0.25 * jnp.sqrt(init_lr) * b)
-
-
 def scale_by_amos(
     learning_rate: ScalarOrSchedule,
     eta_fn: ParamsFn,
     shape_fn: Optional[ParamsFn] = None,
+    finetune_rate: ScalarOrSchedule = 1.,
     init_b_fn: Optional[ParamsFn] = None,
     beta: float = 0.999,
+    zeta: float = 0.25,
     epsilon: float = 1. / (1 << 125),
-    c: Callable[[chex.Array, chex.Array], chex.Array] = default_decay_factor_c,
-    d: Callable[[chex.Array, chex.Array], chex.Array] = default_decay_factor_d,
 ) -> optax.GradientTransformation:
   """Rescale updates according to the Amos algorithm."""
 
@@ -89,12 +81,24 @@ def scale_by_amos(
     b = from_state_dict(params, _unflatten(flat_b))
     return ScaleByAmosState(count=jnp.array(0), v=v, b=b)
 
+  def decay_factor_c(b: chex.Array, xi: chex.Array) -> chex.Array:
+    return jax.lax.rsqrt(1. + zeta * jnp.sqrt(xi) * b)
+
+  def decay_factor_d(b: chex.Array, init_lr: chex.Array) -> chex.Array:
+    return jnp.reciprocal(1. + zeta * jnp.sqrt(init_lr) * b)
+
   def update_fn(updates, state, params):
     count = optax.safe_int32_increment(state.count)
     if callable(learning_rate):
       xi = learning_rate(count)
     else:
       xi = learning_rate
+
+    if callable(finetune_rate):
+      fr = finetune_rate(count)
+    else:
+      fr = finetune_rate
+
     bias_correction = 1. - beta**count
 
     flat_grad = _flatten(to_state_dict(updates), keep_empty_nodes=True)
@@ -114,11 +118,12 @@ def scale_by_amos(
       rcpl_v_hat = bias_correction / jnp.maximum(v, epsilon)
 
       b = flat_b[name]
-      gamma = c(b, xi) * jnp.square(xi) * rcpl_v_hat * g2
+      gamma = jnp.sqrt(fr) * decay_factor_c(b, xi) * (
+          jnp.square(xi) * rcpl_v_hat * g2)
       init_lr = xi * eta_fn(name, theta.shape)
-      flat_grad[name] = d(b, init_lr) * (
+      flat_grad[name] = fr * decay_factor_d(b, init_lr) * (
           -init_lr * jnp.sqrt(rcpl_v_hat) * grad - 0.5 * gamma * theta)
-      flat_b[name] = b + gamma * (1. + b)
+      flat_b[name] = b + gamma * (fr + b)
 
     updates = from_state_dict(updates, _unflatten(flat_grad))
     v = from_state_dict(state.v, _unflatten(flat_v))
@@ -146,13 +151,13 @@ def amos(
     learning_rate: ScalarOrSchedule,
     eta_fn: ParamsFn,
     shape_fn: Optional[ParamsFn] = None,
+    finetune_rate: ScalarOrSchedule = 1.,
     init_b_fn: Optional[ParamsFn] = None,
     beta: float = 0.999,
+    zeta: float = 0.25,
     momentum: Optional[float] = None,
     clip_value: Optional[float] = None,
     epsilon: float = 1. / (1 << 125),
-    c: Callable[[chex.Array, chex.Array], chex.Array] = default_decay_factor_c,
-    d: Callable[[chex.Array, chex.Array], chex.Array] = default_decay_factor_d,
 ) -> optax.GradientTransformation:
   """The full Amos optimizer with optional gradient clipping and momentum.
 
@@ -170,6 +175,9 @@ def amos(
       corresponding slot variables `v` and `b`. The returned shape should be
       broadcastable to the varialbe, while some axes might be reduced to 1 to
       save memory.
+    finetune_rate: A float or callable, usually <=1. It is used when we can
+      estimate the actual error (e.g. by watching the performance on valid set)
+      and want to use this information to adjust the learning rate schedule.
     init_b_fn: A function that maps a variable name and shape to the initial
       value of the slot variable `b`. By default this is set to 0; for pre-
       trained variables restored from another checkpoint, one can set the
@@ -177,11 +185,10 @@ def amos(
       trained epochs), in order to prevent catastrophic forgetting.
     beta: A float slightly < 1. We recommend setting `1 - beta` to the same
       order of magnitude as the learning rate. Defaults to 0.999.
+    zeta: A float that controls the decaying speed. Defaults to 0.25.
     momentum: Exponential decay rate for optional moving average of updates.
     clip_value: Optional gradient clipping value.
     epsilon: The smallest positive normal to prevent division by 0.
-    c: A function to calculate the decay factor c for L2-regularization.
-    d: A function to calculate the decay factor d for learning-rate.
 
   Returns:
     An (init_fn, update_fn) tuple.
@@ -194,11 +201,11 @@ def amos(
           learning_rate,
           eta_fn,
           shape_fn=shape_fn,
+          finetune_rate=finetune_rate,
           init_b_fn=init_b_fn,
           beta=beta,
-          epsilon=epsilon,
-          c=c,
-          d=d))
+          zeta=zeta,
+          epsilon=epsilon))
   if momentum is not None and momentum > 0.:
     tx.append(optax.ema(momentum, debias=False))
 
