@@ -31,6 +31,7 @@ from absl import logging
 import jax
 from jax.experimental import PartitionSpec
 from jax.experimental.multihost_utils import broadcast_one_to_all
+from jax.experimental.multihost_utils import host_local_array_to_global_array
 from jax.experimental.multihost_utils import process_allgather
 import jax.numpy as jnp
 from jestimator import checkpoint_utils
@@ -225,6 +226,9 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
       static_argnums=(0,),
       donate_argnums=(1, 2, 3))
   train_batch = next(train_ds.as_numpy_iterator())
+  if jax.config.jax_array:
+    train_batch = host_local_array_to_global_array(
+        train_batch, partitioner.mesh, partitioner.data_partition_spec)
   metrics = state.metrics_mod.init(rng)
   train_fn = partitioner.compile(  # (batch, state, metrics)->(state, metrics)
       train_fn, config.frozen, train_batch, state, metrics)
@@ -236,6 +240,9 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
         static_argnums=(0,),
         donate_argnums=(1, 3))
     valid_batch = next(valid_ds.as_numpy_iterator())
+    if jax.config.jax_array:
+      valid_batch = host_local_array_to_global_array(
+          valid_batch, partitioner.mesh, partitioner.data_partition_spec)
     valid_fn = partitioner.compile(  # (batch, state, metrics)->metrics
         valid_fn, config.frozen, valid_batch, state, metrics)
   logging.info('End compiling.')
@@ -253,6 +260,9 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
       for i in range(FLAGS.check_every_steps):
         with jax.profiler.StepTraceAnnotation('train', step_num=step + i):
           train_batch = next(train_iter)
+          if jax.config.jax_array:
+            train_batch = host_local_array_to_global_array(
+                train_batch, partitioner.mesh, partitioner.data_partition_spec)
           state, metrics = train_fn(train_batch, state, metrics)
     except StopIteration:
       step = state.step
@@ -269,6 +279,9 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
       valid_iter = valid_ds.as_numpy_iterator()
       for _ in range(valid_steps):
         valid_batch = next(valid_iter)
+        if jax.config.jax_array:
+          valid_batch = host_local_array_to_global_array(
+              valid_batch, partitioner.mesh, partitioner.data_partition_spec)
         metrics = valid_fn(valid_batch, state, metrics)
 
     if jax.process_index() == 0:
@@ -314,7 +327,8 @@ def pred_data(config, partitioner):
   return pred_ds, batch, pred_steps, last_size
 
 
-def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config):
+def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config,
+                    partitioner):
   """Get a function to evaluate model state on a data set."""
   if jax.process_index() == 0:
     evaluator = module.get_evaluator(config)
@@ -326,6 +340,9 @@ def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config):
     eval_iter = eval_ds.as_numpy_iterator()
     for i in range(eval_steps):
       gold, batch = next(eval_iter)
+      if jax.config.jax_array:
+        batch = host_local_array_to_global_array(
+            batch, partitioner.mesh, partitioner.data_partition_spec)
       state = infer_fn(batch, state)
       infer = state.ret
       if infer is not None:
@@ -420,13 +437,17 @@ def eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves):
       break
 
 
-def predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config):
+def predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config,
+            partitioner):
   """Run prediction on a data set."""
   if jax.process_index() == 0:
     predictor = module.get_predictor(config)
   pred_iter = pred_ds.as_numpy_iterator()
   for i in range(pred_steps):
     batch = next(pred_iter)
+    if jax.config.jax_array:
+      batch = host_local_array_to_global_array(batch, partitioner.mesh,
+                                               partitioner.data_partition_spec)
     state = infer_fn(batch, state)
     infer = state.ret
     if infer is not None:
@@ -467,7 +488,7 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
 
   if mode.is_eval and FLAGS.eval_pattern is not None:
     evaluate_fn = get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn,
-                                  module, config)
+                                  module, config, partitioner)
     if mode == RunMode.EVAL_ONCE:
       return evaluate_fn(state)
 
@@ -496,7 +517,8 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
       assert tf.io.gfile.exists(FLAGS.model_dir), 'model_dir does not exist.'
     if ckpt_path is None:
       logging.warning('Model is random initialized.')
-    predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config)
+    predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config,
+            partitioner)
 
 
 def get_random_seed():
