@@ -31,7 +31,6 @@ from absl import logging
 import jax
 from jax.experimental import PartitionSpec
 from jax.experimental.multihost_utils import broadcast_one_to_all
-from jax.experimental.multihost_utils import host_local_array_to_global_array
 from jax.experimental.multihost_utils import process_allgather
 import jax.numpy as jnp
 from jestimator import checkpoint_utils
@@ -49,6 +48,8 @@ flags.DEFINE_string('checkpoint_path', None,
                     'If not None, initialize the model from this checkpoint.')
 flags.DEFINE_enum('mode', None, ['train', 'eval_once', 'eval_wait', 'predict'],
                   'The mode to run this program.')
+flags.DEFINE_boolean('dry_run', False, 'If True, only compile the model'
+                     ' and run data pipeline (no model calculation).')
 flags.DEFINE_integer('max_train_steps', None,
                      'Number of steps to train in total.')
 
@@ -165,7 +166,7 @@ def train_data(config, partitioner):
       shard_source=True,
       epochs=FLAGS.train_epochs)
   logging.info('train_data: %s', train_ds.element_spec)
-  return train_ds
+  return data_utils.DataIterable(train_ds, partitioner)
 
 
 def valid_data(config, partitioner):
@@ -182,7 +183,7 @@ def valid_data(config, partitioner):
       num_take=FLAGS.num_valid_examples)
   logging.info('valid_steps: %d', valid_steps)
   logging.info('valid_data: %s', valid_ds.element_spec)
-  return valid_ds, valid_steps
+  return data_utils.DataIterable(valid_ds, partitioner), valid_steps
 
 
 def train(ckpt_path, same_dir, rng, module, config, partitioner):
@@ -225,13 +226,9 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
       out_axis_resources=(state_mesh, None),  # (state, metrics)
       static_argnums=(0,),
       donate_argnums=(1, 2, 3))
-  train_batch = next(train_ds.as_numpy_iterator())
-  if jax.config.jax_array:
-    train_batch = host_local_array_to_global_array(
-        train_batch, partitioner.mesh, partitioner.data_partition_spec)
   metrics = state.metrics_mod.init(rng)
   train_fn = partitioner.compile(  # (batch, state, metrics)->(state, metrics)
-      train_fn, config.frozen, train_batch, state, metrics)
+      train_fn, config.frozen, next(iter(train_ds)), state, metrics)
   if FLAGS.valid_pattern is not None:
     valid_fn = partitioner.partition(
         module.valid_step,
@@ -239,31 +236,26 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
         out_axis_resources=None,
         static_argnums=(0,),
         donate_argnums=(1, 3))
-    valid_batch = next(valid_ds.as_numpy_iterator())
-    if jax.config.jax_array:
-      valid_batch = host_local_array_to_global_array(
-          valid_batch, partitioner.mesh, partitioner.data_partition_spec)
     valid_fn = partitioner.compile(  # (batch, state, metrics)->metrics
-        valid_fn, config.frozen, valid_batch, state, metrics)
+        valid_fn, config.frozen, next(iter(valid_ds)), state, metrics)
   logging.info('End compiling.')
 
-  train_iter = train_ds.as_numpy_iterator()
   if FLAGS.save_every_steps is not None:
     save_dir = os.path.join(FLAGS.model_dir, 'save')
     save_mgr = checkpoints.Checkpointer(state, partitioner, save_dir)
   if jax.process_index() == 0:
     tb_writer = tf.summary.create_file_writer(
         os.path.join(FLAGS.model_dir, 'train'))
+  train_iter = iter(train_ds)
   while FLAGS.max_train_steps is None or step < FLAGS.max_train_steps:
     metrics = state.metrics_mod.init(rng)
     try:
       for i in range(FLAGS.check_every_steps):
         with jax.profiler.StepTraceAnnotation('train', step_num=step + i):
-          train_batch = next(train_iter)
-          if jax.config.jax_array:
-            train_batch = host_local_array_to_global_array(
-                train_batch, partitioner.mesh, partitioner.data_partition_spec)
-          state, metrics = train_fn(train_batch, state, metrics)
+          if FLAGS.dry_run:
+            next(train_iter)
+          else:
+            state, metrics = train_fn(next(train_iter), state, metrics)
     except StopIteration:
       step = state.step
       ckpt_mgr.save(state)
@@ -276,13 +268,12 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
       save_mgr.save(state)
 
     if FLAGS.valid_pattern is not None:
-      valid_iter = valid_ds.as_numpy_iterator()
+      valid_iter = iter(valid_ds)
       for _ in range(valid_steps):
-        valid_batch = next(valid_iter)
-        if jax.config.jax_array:
-          valid_batch = host_local_array_to_global_array(
-              valid_batch, partitioner.mesh, partitioner.data_partition_spec)
-        metrics = valid_fn(valid_batch, state, metrics)
+        if FLAGS.dry_run:
+          next(valid_iter)
+        else:
+          metrics = valid_fn(next(valid_iter), state, metrics)
 
     if jax.process_index() == 0:
       module.monitor_train(config, state, tb_writer, metrics)
@@ -295,40 +286,35 @@ def eval_data(config, partitioner):
   """Creates eval data set."""
   filenames = data_utils.get_dataset_filenames(FLAGS.eval_pattern)
   eval_d = config.eval_data_fn(filenames, num_take=FLAGS.num_eval_examples)
-  eval_steps, last_size = data_utils.count_dataset(eval_d,
-                                                   FLAGS.eval_batch_size)
+  steps, last_size = data_utils.count_dataset(eval_d, FLAGS.eval_batch_size)
   eval_ds = data_utils.create_data_pipeline(
       filenames,
       config.eval_data_fn,
       partitioner.get_data_layout(FLAGS.eval_batch_size),
       drop_remainder=True,
-      epochs=None)  # Always repeat and drop_remainder; iter eval_steps.
-  _, batch = next(eval_ds.as_numpy_iterator())
-  logging.info('eval_steps: %d', eval_steps)
+      epochs=None)  # Always repeat and drop_remainder; iter steps.
+  logging.info('eval_steps: %d', steps)
   logging.info('eval_data: %s', eval_ds.element_spec)
-  return eval_ds, batch, eval_steps, last_size
+  return data_utils.DataIterable(eval_ds, partitioner), steps, last_size
 
 
 def pred_data(config, partitioner):
   """Creates prediction data set."""
   filenames = data_utils.get_dataset_filenames(FLAGS.pred_pattern)
   pred_d = config.pred_data_fn(filenames, num_take=FLAGS.num_pred_examples)
-  pred_steps, last_size = data_utils.count_dataset(pred_d,
-                                                   FLAGS.pred_batch_size)
+  steps, last_size = data_utils.count_dataset(pred_d, FLAGS.pred_batch_size)
   pred_ds = data_utils.create_data_pipeline(
       filenames,
       config.pred_data_fn,
       partitioner.get_data_layout(FLAGS.pred_batch_size),
       drop_remainder=True,
-      epochs=None)  # Always repeat and drop_remainder; iter pred_steps.
-  batch = next(pred_ds.as_numpy_iterator())
-  logging.info('pred_steps: %d', pred_steps)
+      epochs=None)  # Always repeat and drop_remainder; iter steps.
+  logging.info('pred_steps: %d', steps)
   logging.info('pred_data: %s', pred_ds.element_spec)
-  return pred_ds, batch, pred_steps, last_size
+  return data_utils.DataIterable(pred_ds, partitioner), steps, last_size
 
 
-def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config,
-                    partitioner):
+def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config):
   """Get a function to evaluate model state on a data set."""
   if jax.process_index() == 0:
     evaluator = module.get_evaluator(config)
@@ -337,13 +323,12 @@ def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config,
     """Evaluate `state` on a data set."""
     if jax.process_index() == 0:
       evaluator.reset_states()
-    eval_iter = eval_ds.as_numpy_iterator()
+    eval_iter = iter(eval_ds)
     for i in range(eval_steps):
       gold, batch = next(eval_iter)
-      if jax.config.jax_array:
-        batch = host_local_array_to_global_array(
-            batch, partitioner.mesh, partitioner.data_partition_spec)
-      state = infer_fn(batch, state)
+      if not FLAGS.dry_run:
+        state = infer_fn(batch, state)
+        del batch
       infer = state.ret
       if infer is not None:
         state = state.replace(ret=None)
@@ -437,18 +422,16 @@ def eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves):
       break
 
 
-def predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config,
-            partitioner):
+def predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config):
   """Run prediction on a data set."""
   if jax.process_index() == 0:
     predictor = module.get_predictor(config)
-  pred_iter = pred_ds.as_numpy_iterator()
+  pred_iter = iter(pred_ds)
   for i in range(pred_steps):
-    batch = next(pred_iter)
-    if jax.config.jax_array:
-      batch = host_local_array_to_global_array(batch, partitioner.mesh,
-                                               partitioner.data_partition_spec)
-    state = infer_fn(batch, state)
+    if FLAGS.dry_run:
+      next(pred_iter)
+    else:
+      state = infer_fn(next(pred_iter), state)
     infer = state.ret
     if infer is not None:
       state = state.replace(ret=None)
@@ -471,9 +454,11 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
         state, checkpoints.load_t5x_checkpoint(ckpt_path), load_step=True)
 
   if mode.is_eval and FLAGS.eval_pattern is not None:
-    eval_ds, batch, eval_steps, last_size = eval_data(config, partitioner)
+    eval_ds, eval_steps, last_size = eval_data(config, partitioner)
+    _, batch = next(iter(eval_ds))
   elif mode == RunMode.PREDICT and FLAGS.pred_pattern is not None:
-    pred_ds, batch, pred_steps, last_size = pred_data(config, partitioner)
+    pred_ds, pred_steps, last_size = pred_data(config, partitioner)
+    batch = next(iter(pred_ds))
 
   logging.info('Start compiling.')
   state_mesh = partitioner.get_mesh_axes(state)
@@ -484,11 +469,12 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
       static_argnums=(0,),
       donate_argnums=(1, 2))
   infer_fn = partitioner.compile(infer_fn, config.frozen, batch, state)
+  del batch
   logging.info('End compiling.')
 
   if mode.is_eval and FLAGS.eval_pattern is not None:
     evaluate_fn = get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn,
-                                  module, config, partitioner)
+                                  module, config)
     if mode == RunMode.EVAL_ONCE:
       return evaluate_fn(state)
 
@@ -517,8 +503,7 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
       assert tf.io.gfile.exists(FLAGS.model_dir), 'model_dir does not exist.'
     if ckpt_path is None:
       logging.warning('Model is random initialized.')
-    predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config,
-            partitioner)
+    predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config)
 
 
 def get_random_seed():

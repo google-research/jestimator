@@ -16,6 +16,8 @@
 from typing import Callable, List, Sequence, Tuple, Union
 
 from absl import logging
+import jax
+from jax.experimental.multihost_utils import host_local_array_to_global_array
 import tensorflow as tf
 from tensorflow.io import gfile
 
@@ -28,6 +30,7 @@ class StringIterable(object):
   """Converts `x` to iterable of strings.
 
   `x` can be a string, list of strings, or a tf.data.Dataset of tf.string.
+  This prevents a Python string to be converted to iterable of characters.
   """
 
   def __init__(self, x: Union[str, Sequence[str], tf.data.Dataset]):
@@ -200,3 +203,19 @@ def create_data_pipeline(filenames: List[str],
     d = d.prefetch(tf.data.AUTOTUNE)
 
   return d
+
+
+class DataIterable(object):
+  """Converts tf.data.Dataset to iterable of numpy arrays."""
+
+  def __init__(self, x: tf.data.Dataset, partitioner):
+    self.x = x
+    self.partitioner = partitioner
+
+  def __iter__(self):
+    ret = self.x.as_numpy_iterator()
+    if jax.config.jax_array:
+      mesh = self.partitioner.mesh
+      spec = self.partitioner.data_partition_spec
+      ret = (host_local_array_to_global_array(x, mesh, spec) for x in ret)
+    return ret
