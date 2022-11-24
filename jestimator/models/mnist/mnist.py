@@ -12,7 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MNIST Example using JEstimator."""
+r"""MNIST Example using JEstimator.
+
+# For debug run locally:
+
+## Train:
+
+```
+PYTHONPATH=. python3 jestimator/estimator.py \
+  --module_imp="jestimator.models.mnist.mnist" \
+  --module_config="jestimator/models/mnist/mnist.py" \
+  --train_pattern="tfds://mnist/split=train" \
+  --model_dir="$HOME/experiments/mnist/models" \
+  --train_batch_size=32 \
+  --train_shuffle_buf=4096 \
+  --train_epochs=9 \
+  --check_every_steps=100 \
+  --logtostderr
+```
+
+## Eval continuously:
+
+```
+PYTHONPATH=. python3 jestimator/estimator.py \
+  --module_imp="jestimator.models.mnist.mnist" \
+  --module_config="jestimator/models/mnist/mnist.py" \
+  --eval_pattern="tfds://mnist/split=test" \
+  --model_dir="$HOME/experiments/mnist/models" \
+  --eval_batch_size=32 \
+  --mode="eval_wait" \
+  --check_ckpt_every_secs=1 \
+  --save_high="test_accuracy" \
+  --logtostderr
+"""
 import math
 import re
 
@@ -51,6 +83,8 @@ def load_config(global_flags):
   def dataset_fn(path: str) -> tf.data.Dataset:
     # Assum `path` is of the form 'tfds://{name}/split={split}'
     m = re.match('tfds://(.*)/split=(.*)', path)
+    assert m is not None, (f'Cannot parse "{path}" (should be of the form '
+                           '"tfds://{name}/split={split}").')
     name = m.group(1)
     split = m.group(2)
     builder = tfds.builder(name)
@@ -82,6 +116,7 @@ class CNN(nn.Module):
 
   @nn.compact
   def __call__(self, x):
+    x /= 255.  # Each value (pixel) in input image is 0~255.
     x = nn.Conv(features=32, kernel_size=(3, 3))(x)
     x = nn.relu(x)
     x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))

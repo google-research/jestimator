@@ -139,6 +139,9 @@ def get_mode_heuristic(ckpt_path):
         'Both train_pattern and pred_pattern are set, run mode ambiguous.')
   else:
     mode = 'predict'
+
+  if mode != 'train' and FLAGS.model_dir is not None:
+    assert tf.io.gfile.exists(FLAGS.model_dir), 'model_dir does not exist.'
   return mode
 
 
@@ -189,7 +192,7 @@ def valid_data(config, partitioner):
   return data_utils.DataIterable(valid_ds, partitioner), valid_steps
 
 
-def default_monitor_train(state, tb_writer, metrics):
+def default_monitor_train(state, metrics, tb_writer):
   """Write scales of variables to tensorboard and log metrics."""
   step = state.step
   with tb_writer.as_default():
@@ -207,30 +210,8 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
   if FLAGS.valid_pattern is not None:
     valid_ds, valid_steps = valid_data(config, partitioner)
 
-  state = module.get_train_state(config, rng)
-  ckpt_mgr = checkpoints.Checkpointer(
-      state, partitioner, FLAGS.model_dir, keep=FLAGS.max_ckpt)
-  if ckpt_path is not None:
-    if same_dir:
-      state = ckpt_mgr.restore(path=ckpt_path)
-    else:
-      state = checkpoint_utils.partial_restore(
-          state,
-          checkpoints.load_t5x_checkpoint(ckpt_path),
-          load_step=FLAGS.train_load_step)
-      state = state.replace(opt_state=state.tx.init(state.params))
-
-  step = state.step
-  logging.info('Currently trained steps: %d', step)
-  if ckpt_path is None or not same_dir:
-    # Save the initial model as well.
-    ckpt_mgr.save(state)
-  if FLAGS.max_train_steps is not None and step >= FLAGS.max_train_steps:
-    logging.warning(
-        'Current step (%d) already reached max_train_steps (%d);'
-        ' no training will be done.', step, FLAGS.max_train_steps)
-
   logging.info('Start compiling.')
+  state = module.get_train_state(config, rng)
   state_mesh = partitioner.get_mesh_axes(state).replace(step=PartitionSpec())
   in_axis_res = (partitioner.data_partition_spec, state_mesh, None)
   # (config, batch, state, metrics)
@@ -252,7 +233,30 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
         donate_argnums=(1, 3))
     valid_fn = partitioner.compile(  # (batch, state, metrics)->metrics
         valid_fn, config.frozen, next(iter(valid_ds)), state, metrics)
+  del in_axis_res, state_mesh
   logging.info('End compiling.')
+
+  ckpt_mgr = checkpoints.Checkpointer(
+      state, partitioner, FLAGS.model_dir, keep=FLAGS.max_ckpt)
+  if ckpt_path is not None:
+    if same_dir:
+      state = ckpt_mgr.restore(path=ckpt_path)
+    else:
+      state = checkpoint_utils.partial_restore(
+          state,
+          checkpoints.load_t5x_checkpoint(ckpt_path),
+          load_step=FLAGS.train_load_step)
+      state = state.replace(opt_state=state.tx.init(state.params))
+
+  step = state.step
+  logging.info('Currently trained steps: %d', step)
+  if ckpt_path is None or not same_dir:
+    # Save the initial model as well.
+    ckpt_mgr.save(state)
+  if FLAGS.max_train_steps is not None and step >= FLAGS.max_train_steps:
+    logging.warning(
+        'Current step (%d) already reached max_train_steps (%d);'
+        ' no training will be done.', step, FLAGS.max_train_steps)
 
   if FLAGS.save_every_steps is not None:
     save_dir = os.path.join(FLAGS.model_dir, 'save')
@@ -290,10 +294,9 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
           metrics = valid_fn(next(valid_iter), state, metrics)
 
     if jax.process_index() == 0:
+      default_monitor_train(state, metrics, tb_writer)
       if hasattr(module, 'monitor_train'):
-        module.monitor_train(config, state, tb_writer, metrics)
-      else:
-        default_monitor_train(state, tb_writer, metrics)
+        module.monitor_train(config, state, metrics, tb_writer)
 
   logging.info('Training finished at step %d', step)
   return state.metrics_mod.apply(metrics)
@@ -470,12 +473,8 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
   elif mode == RunMode.PREDICT and FLAGS.pred_pattern is not None:
     pred_ds, pred_steps, last_size = pred_data(config, partitioner)
 
-  state = module.get_infer_state(config)
-  if ckpt_path is not None:
-    state = checkpoint_utils.partial_restore(
-        state, checkpoints.load_t5x_checkpoint(ckpt_path), load_step=True)
-
   logging.info('Start compiling.')
+  state = module.get_infer_state(config)
   state_mesh = partitioner.get_mesh_axes(state)
   infer_fn = partitioner.partition(
       module.infer_step,
@@ -483,6 +482,7 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
       out_axis_resources=state_mesh,
       static_argnums=(0,),
       donate_argnums=(1, 2))
+  del state_mesh
   if mode.is_eval and FLAGS.eval_pattern is not None:
     _, batch = next(iter(eval_ds))
   elif mode == RunMode.PREDICT and FLAGS.pred_pattern is not None:
@@ -490,6 +490,14 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
   infer_fn = partitioner.compile(infer_fn, config.frozen, batch, state)
   del batch
   logging.info('End compiling.')
+
+  if ckpt_path is None:
+    logging.warning('Model is random initialized.')
+  else:
+    state = checkpoint_utils.partial_restore(
+        state, checkpoints.load_t5x_checkpoint(ckpt_path), load_step=True)
+    if state.step == 0:
+      logging.warning('The step is 0 (model may not be trained).')
 
   if mode.is_eval and FLAGS.eval_pattern is not None:
     evaluate_fn = get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn,
@@ -506,7 +514,6 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
         ckpt_saver = checkpoints.Checkpointer(
             state, partitioner, save_dir, keep=FLAGS.max_save)
         high_saves.append((metric, ckpt_saver))
-        ckpt_saver.save(state)
 
       low_saves = []
       for metric in FLAGS.save_low:
@@ -518,10 +525,6 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
       eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves)
 
   elif mode == RunMode.PREDICT and FLAGS.pred_pattern is not None:
-    if FLAGS.model_dir is not None:
-      assert tf.io.gfile.exists(FLAGS.model_dir), 'model_dir does not exist.'
-    if ckpt_path is None:
-      logging.warning('Model is random initialized.')
     predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config)
 
 
