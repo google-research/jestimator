@@ -18,8 +18,6 @@ import dataclasses
 import importlib
 from typing import Mapping
 
-from absl import logging
-from flax.traverse_util import flatten_dict
 import jax
 import jax.numpy as jnp
 from jestimator import amos
@@ -239,16 +237,3 @@ def valid_step(config, valid_batch, state: TrainState, metrics):
     return metrics
 
   return jax.lax.fori_loop(0, 20, body, metrics)
-
-
-def monitor_train(config, state: TrainState, tb_writer, metrics):
-  """Monitoring training state by output to tensorboard and logging."""
-  del config  # Unused.
-  step = state.step
-  with tb_writer.as_default():
-    for k, v in flatten_dict(state.params, sep='/').items():
-      r = jnp.sqrt(jnp.mean(jnp.square(v))).block_until_ready()
-      tf.summary.scalar(f'params_scale/{k}', r, step=step)
-    for k, v in state.metrics_mod.apply(metrics).items():
-      logging.info('%s at step %d: %f', k, step, v)
-      tf.summary.scalar(f'train/{k}', v, step=step)

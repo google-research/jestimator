@@ -13,19 +13,13 @@ light-weight library with a `tf.Estimator`-like interface to manage
 learning programs in [Jax](https://github.com/google/jax), which we use to run
 experiments in the paper.
 
-## Quick start
+## Quick Start
 
 ```
 pip install jestimator
 ```
 
-It will install the jestimator lib with the Amos optimizer. We can test the Amos
-optimizer by:
-
-```
-python3 -m jestimator.amos_test
-python3 -m jestimator.amos_helper_test
-```
+It will install the Amos optimizer implemented in the jestimator lib.
 
 ## Usage of Amos
 
@@ -112,11 +106,11 @@ We create the model and optimizer in this function.
 
 **For the optimizer, we use Amos here.** The following hyper-parameters are set:
 
- * *learning_rate*:       The global learning rate.
- * *eta_fn*:              The model-specific 'eta'.
- * *shape_fn*:            Memory reduction setting.
- * *beta*:                Rate for running average of gradient squares.
- * *clip_value*:          Gradient clipping for stable training.
+*   *learning_rate*:       The global learning rate.
+*   *eta_fn*:              The model-specific 'eta'.
+*   *shape_fn*:            Memory reduction setting.
+*   *beta*:                Rate for running average of gradient squares.
+*   *clip_value*:          Gradient clipping for stable training.
 
 The global learning rate is usually set to the 1/sqrt(N), where N is the number
 of batches in the training data. For MNIST, we have 60k training examples and
@@ -129,7 +123,7 @@ in the near future we will have libraries that can automatically calculate this
 
 One can use the amos_helper.params_fn_from_assign_map() helper function to
 create 'eta_fn' from an assign_map. An assign_map is a dict which maps regex
-rules to a value or simple Python expressions. It will find the first regex rule
+rules to a value or simple Python expression. It will find the first regex rule
 which matches the name of a variable, and evaluate the Python expression if
 necessary to return the value. See our example below.
 
@@ -256,40 +250,95 @@ training very large models across multiple TPU pods. It supports a
 saves and restores checkpoints in a distributed manner, which is suitable for
 large multi-pod models.
 
-Clone this repo to get JEstimator models:
-
-```
-git clone --branch=main https://github.com/google-research/jestimator
-```
-
-## Run models with JEstimator
-
-We need [T5X](https://github.com/google-research/t5x#installation) and
-[FlaxFormer](https://github.com/google/flaxformer) for running the models.
+In order to run models with JEstimator, we need to install
+[T5X](https://github.com/google-research/t5x#installation) and
+[FlaxFormer](https://github.com/google/flaxformer):
 
 ```
 git clone --branch=main https://github.com/google-research/t5x
-cd t5x  # Install T5X with TPU support, so we can pre-train on Google Cloud:
-python3 -m pip install -e '.[tpu]' -f \
-  https://storage.googleapis.com/jax-releases/libtpu_releases.html
+cd t5x
+python3 -m pip install -e .
 cd ..
 
 git clone --branch=main https://github.com/google/flaxformer
-cd flaxformer  # Install FlaxFormer:
-pip3 install '.[testing]'
+cd flaxformer
+pip3 install .
 cd ..
 ```
 
-Then, we can test a toy linear regression model with JEstimator:
+Then, clone this repo to get the JEstimator code:
 
 ```
-JAX_PLATFORMS=cpu PYTHONPATH=. python3 jestimator/models/linear_regression/linear_regression_test.py
+git clone --branch=main https://github.com/google-research/jestimator
+cd jestimator
 ```
 
-And we can train a single layer LSTM model on PTB:
+Now, we can test a toy linear regression model:
 
 ```
-JAX_PLATFORMS=cpu PYTHONPATH=. python3 jestimator/estimator.py \
+PYTHONPATH=. python3 jestimator/models/linear_regression/linear_regression_test.py
+```
+
+## MNIST Example in JEstimator
+
+We provide this
+[MNIST Example](https://github.com/google/flax/tree/main/examples/mnist/mnist.py)
+to demonstrate how to write modeling code with JEstimator. It is much like the
+example above, but with a big advantage that, a config object is passed around
+to collect information from global flags and the dataset, in order to
+dynamically setup modeling.
+
+With the following command, we can start a job to train on MNIST, log every 100
+steps, and save the checkpoints to $HOME/experiments/mnist/models:
+
+```
+PYTHONPATH=. python3 jestimator/estimator.py \
+  --module_imp="jestimator.models.mnist.mnist" \
+  --module_config="jestimator/models/mnist/mnist.py" \
+  --train_pattern="tfds://mnist/split=train" \
+  --model_dir="$HOME/experiments/mnist/models" \
+  --train_batch_size=32 \
+  --train_shuffle_buf=4096 \
+  --train_epochs=9 \
+  --check_every_steps=100 \
+  --max_ckpt=20 \
+  --save_every_steps=1000 \
+  --module_config.warmup=2000 \
+  --module_config.amos_beta=0.98
+```
+
+Meanwhile, we can start a job to monitor the $HOME/experiments/mnist/models
+folder, evaluate on MNIST test set, and save the model with the highest
+accuracy:
+
+```
+PYTHONPATH=. python3 jestimator/estimator.py \
+  --module_imp="jestimator.models.mnist.mnist" \
+  --module_config="jestimator/models/mnist/mnist.py" \
+  --eval_pattern="tfds://mnist/split=test" \
+  --model_dir="$HOME/experiments/mnist/models" \
+  --eval_batch_size=32 \
+  --mode="eval_wait" \
+  --check_ckpt_every_secs=1 \
+  --save_high="test_accuracy"
+```
+
+At the same time, we can start a tensorboard to monitor the process:
+
+```
+tensorboard --logdir $HOME/experiments/mnist/models
+```
+
+## More JEstimator Models
+
+Here are the recipes to run several models in JEstimator.
+
+### LSTM on PTB
+
+To train a single layer LSTM model on PTB:
+
+```
+PYTHONPATH=. python3 jestimator/estimator.py \
   --module_imp="jestimator.models.lstm.lm" \
   --module_config="jestimator/models/lstm/lm.py" \
   --module_config.vocab_path="jestimator/models/lstm/ptb/vocab.txt" \
@@ -304,19 +353,17 @@ JAX_PLATFORMS=cpu PYTHONPATH=. python3 jestimator/estimator.py \
   --module_config.opt_config.optimizer="amos" \
   --module_config.opt_config.learning_rate=0.01 \
   --module_config.opt_config.beta=0.98 \
-  --module_config.opt_config.momentum=0.0 \
-  --logtostderr
+  --module_config.opt_config.momentum=0.0
 ```
 
-After the training completes, we can evaluate the model on validation set:
+To evaluate the model on validation set:
 
 ```
-JAX_PLATFORMS=cpu PYTHONPATH=. python3 jestimator/estimator.py \
+PYTHONPATH=. python3 jestimator/estimator.py \
   --module_imp="jestimator.models.lstm.lm" \
   --module_config="jestimator/models/lstm/lm.py" \
   --module_config.vocab_path="jestimator/models/lstm/ptb/vocab.txt" \
   --eval_pattern="jestimator/models/lstm/ptb/ptb.valid.txt" \
   --model_dir="$HOME/models/ptb_lstm" \
-  --eval_batch_size=1 \
-  --logtostderr
+  --eval_batch_size=1
 ```

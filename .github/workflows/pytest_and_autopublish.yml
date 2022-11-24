@@ -1,0 +1,55 @@
+name: Unittests & Auto-publish
+
+# Allow to trigger the workflow manually (e.g. when deps changes)
+on: [push, workflow_dispatch]
+
+jobs:
+  test-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+    - uses: actions/checkout@v3
+
+    # Install deps
+    - uses: actions/setup-python@v4
+      with:
+        python-version: 3.7
+        # Uncomment to cache of pip dependencies (if tests too slow)
+        # cache: pip
+        # cache-dependency-path: '**/pyproject.toml'
+
+    - run: pip --version
+    - run: pip install -e .[test]
+    - run: pip freeze
+
+    # Run tests (in parallel)
+    - name: Run core tests
+      run: python3 jestimator/amos_test.py
+      run: python3 jestimator/amos_helper_test.py
+
+  # Auto-publish when version is increased
+  publish-job:
+    # Only try to publish if:
+    # * Repo is self (prevents running from forks)
+    # * Branch is `main`
+    if: |
+      github.repository == 'google-research/my_project'
+      && github.ref == 'refs/heads/main'
+    needs: test-job  # Only publish after tests are successful
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
+
+    steps:
+    # Publish the package (if local `__version__` > pip version)
+    - uses: etils-actions/pypi-auto-publish@v1
+      with:
+        pypi-token: ${{ secrets.PYPI_API_TOKEN }}
+        gh-token: ${{ secrets.GITHUB_TOKEN }}
+        parse-changelog: true
