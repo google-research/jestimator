@@ -28,6 +28,7 @@ import time
 from absl import app
 from absl import flags
 from absl import logging
+from flax.traverse_util import flatten_dict
 import jax
 from jax.experimental import PartitionSpec
 from jax.experimental.multihost_utils import broadcast_one_to_all
@@ -48,8 +49,9 @@ flags.DEFINE_string('checkpoint_path', None,
                     'If not None, initialize the model from this checkpoint.')
 flags.DEFINE_enum('mode', None, ['train', 'eval_once', 'eval_wait', 'predict'],
                   'The mode to run this program.')
-flags.DEFINE_boolean('dry_run', False, 'If True, only compile the model'
-                     ' and run data pipeline (no model calculation).')
+flags.DEFINE_boolean(
+    'dry_run', False, 'If True, only compile the model'
+    ' and run data pipeline (no model calculation).')
 flags.DEFINE_integer('max_train_steps', None,
                      'Number of steps to train in total.')
 
@@ -79,6 +81,9 @@ flags.DEFINE_integer('max_ckpt', 10, 'Max number of checkpoints to keep.')
 flags.DEFINE_integer('max_save', 3, 'Max number of checkpoints to save.')
 flags.DEFINE_integer('save_every_steps', None,
                      'Separately save checkpoint for every n training steps.')
+flags.DEFINE_integer(
+    'profiler_port', None,
+    'If not None, start a profiler server at this port during training.')
 
 flags.DEFINE_list(
     'eval_pattern', None, 'Filename pattern of evaluation corpus.'
@@ -145,8 +150,6 @@ def get_partitioner(config):
     num_partitions = None
     model_parallel_submesh = ast.literal_eval(model_parallel_submesh)
   rules = getattr(config, 'logical_axis_rules', None)
-  if rules is None:
-    rules = partitioning.standard_logical_axis_rules()
   partitioner = partitioning.PjitPartitioner(
       num_partitions=num_partitions,
       model_parallel_submesh=model_parallel_submesh,
@@ -186,10 +189,25 @@ def valid_data(config, partitioner):
   return data_utils.DataIterable(valid_ds, partitioner), valid_steps
 
 
+def default_monitor_train(state, tb_writer, metrics):
+  """Write scales of variables to tensorboard and log metrics."""
+  step = state.step
+  with tb_writer.as_default():
+    for k, v in flatten_dict(state.params, sep='/').items():
+      r = jax.device_get(jnp.sqrt(jnp.mean(jnp.square(v))))
+      tf.summary.scalar(f'params_scale/{k}', r, step=step)
+    for k, v in state.metrics_mod.apply(metrics).items():
+      logging.info('%s at step %d: %f', k, step, v)
+      tf.summary.scalar(f'train/{k}', v, step=step)
+
+
 def train(ckpt_path, same_dir, rng, module, config, partitioner):
   """Run training loop."""
-  state = module.get_train_state(config, rng)
+  train_ds = train_data(config, partitioner)
+  if FLAGS.valid_pattern is not None:
+    valid_ds, valid_steps = valid_data(config, partitioner)
 
+  state = module.get_train_state(config, rng)
   ckpt_mgr = checkpoints.Checkpointer(
       state, partitioner, FLAGS.model_dir, keep=FLAGS.max_ckpt)
   if ckpt_path is not None:
@@ -211,10 +229,6 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
     logging.warning(
         'Current step (%d) already reached max_train_steps (%d);'
         ' no training will be done.', step, FLAGS.max_train_steps)
-
-  train_ds = train_data(config, partitioner)
-  if FLAGS.valid_pattern is not None:
-    valid_ds, valid_steps = valid_data(config, partitioner)
 
   logging.info('Start compiling.')
   state_mesh = partitioner.get_mesh_axes(state).replace(step=PartitionSpec())
@@ -251,10 +265,10 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
     metrics = state.metrics_mod.init(rng)
     try:
       for i in range(FLAGS.check_every_steps):
-        with jax.profiler.StepTraceAnnotation('train', step_num=step + i):
-          if FLAGS.dry_run:
-            next(train_iter)
-          else:
+        if FLAGS.dry_run:
+          next(train_iter)
+        else:
+          with jax.profiler.StepTraceAnnotation('train', step_num=step + i):
             state, metrics = train_fn(next(train_iter), state, metrics)
     except StopIteration:
       step = state.step
@@ -276,7 +290,10 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
           metrics = valid_fn(next(valid_iter), state, metrics)
 
     if jax.process_index() == 0:
-      module.monitor_train(config, state, tb_writer, metrics)
+      if hasattr(module, 'monitor_train'):
+        module.monitor_train(config, state, tb_writer, metrics)
+      else:
+        default_monitor_train(state, tb_writer, metrics)
 
   logging.info('Training finished at step %d', step)
   return state.metrics_mod.apply(metrics)
@@ -448,17 +465,15 @@ def predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config):
 
 def eval_or_predict(ckpt_path, mode, module, config, partitioner):
   """Run eval or predict."""
+  if mode.is_eval and FLAGS.eval_pattern is not None:
+    eval_ds, eval_steps, last_size = eval_data(config, partitioner)
+  elif mode == RunMode.PREDICT and FLAGS.pred_pattern is not None:
+    pred_ds, pred_steps, last_size = pred_data(config, partitioner)
+
   state = module.get_infer_state(config)
   if ckpt_path is not None:
     state = checkpoint_utils.partial_restore(
         state, checkpoints.load_t5x_checkpoint(ckpt_path), load_step=True)
-
-  if mode.is_eval and FLAGS.eval_pattern is not None:
-    eval_ds, eval_steps, last_size = eval_data(config, partitioner)
-    _, batch = next(iter(eval_ds))
-  elif mode == RunMode.PREDICT and FLAGS.pred_pattern is not None:
-    pred_ds, pred_steps, last_size = pred_data(config, partitioner)
-    batch = next(iter(pred_ds))
 
   logging.info('Start compiling.')
   state_mesh = partitioner.get_mesh_axes(state)
@@ -468,6 +483,10 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
       out_axis_resources=state_mesh,
       static_argnums=(0,),
       donate_argnums=(1, 2))
+  if mode.is_eval and FLAGS.eval_pattern is not None:
+    _, batch = next(iter(eval_ds))
+  elif mode == RunMode.PREDICT and FLAGS.pred_pattern is not None:
+    batch = next(iter(pred_ds))
   infer_fn = partitioner.compile(infer_fn, config.frozen, batch, state)
   del batch
   logging.info('End compiling.')
@@ -532,7 +551,6 @@ def main(argv):
     seed = get_random_seed()
   set_hardware_rng_ops()
   tf.random.set_seed(seed)
-  rng = jax.random.PRNGKey(seed)
 
   # Dynamically load modeling module and initialize config.
   module = importlib.import_module(FLAGS.module_imp)
@@ -540,7 +558,12 @@ def main(argv):
   partitioner = get_partitioner(config)
 
   if mode == RunMode.TRAIN and FLAGS.train_pattern is not None:
-    train(ckpt_path, same_dir, rng, module, config, partitioner)
+    if jax.process_index() == 0 and FLAGS.profiler_port is not None:
+      jax.profiler.start_server(FLAGS.profiler_port)
+    train(ckpt_path, same_dir, jax.random.PRNGKey(seed), module, config,
+          partitioner)
+    if jax.process_index() == 0 and FLAGS.profiler_port is not None:
+      jax.profiler.stop_server()
   else:
     eval_or_predict(ckpt_path, mode, module, config, partitioner)
 

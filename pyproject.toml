@@ -1,10 +1,10 @@
 [project]
 name = "jestimator"
-description = "Estimator-like checkpointing in Jax, with the Amos optimizer."
+description = "Implementation of the Amos optimizer from the JEstimator lib."
 readme = "README.md"
 requires-python = ">=3.7"
 license = {file = "LICENSE"}
-authors = [{name = "jestimator authors", email="jestimator@google.com"}]
+authors = [{name = "jestimator authors", email="no-reply@google.com"}]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -15,8 +15,6 @@ keywords = []
 
 # pip dependencies of the project
 dependencies = [
-    "tensorflow-cpu",
-    "jax",
     "flax",
 ]
 
@@ -29,13 +27,9 @@ repository = "https://github.com/google-research/jestimator"
 # Other: `documentation`, `changelog`
 
 [project.optional-dependencies]
-# Development deps (unittest, linting, formating,...)
-# Installed through `pip install .[dev]`
-dev = [
-    "pytest",
-    "pytest-xdist",
-    "pylint>=2.6.0",
-    "yapf",
+# Installed through `pip install .[test]`
+test = [
+    "absl-py",
 ]
 
 [build-system]
@@ -45,5 +39,13 @@ build-backend = "flit_core.buildapi"
 # Only publish the Amos optimizer to pip.
 [tool.flit.sdist]
 exclude = [
+    "jestimator/amos_helper_test.py",
+    "jestimator/amos_test.py",
+    "jestimator/checkpoint_utils.py",
+    "jestimator/data/",
+    "jestimator/data_utils.py",
+    "jestimator/estimator.py",
+    "jestimator/modeling.py",
     "jestimator/models/",
+    "jestimator/states.py",
 ]
