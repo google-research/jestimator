@@ -28,8 +28,10 @@ jobs:
     - run: pip freeze
 
     # Run tests (in parallel)
-    - name: Run core tests
+    - name: amos_test
       run: python3 jestimator/amos_test.py
+
+    - name: amos_helper_test
       run: python3 jestimator/amos_helper_test.py
 
   # Auto-publish when version is increased
