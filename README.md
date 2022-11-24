@@ -282,7 +282,7 @@ PYTHONPATH=. python3 jestimator/models/linear_regression/linear_regression_test.
 ## MNIST Example in JEstimator
 
 We provide this
-[MNIST Example](https://github.com/google/flax/tree/main/examples/mnist/mnist.py)
+[MNIST Example](https://github.com/google-research/jestimator/tree/main/jestimator/models/mnist/mnist.py)
 to demonstrate how to write modeling code with JEstimator. It is much like the
 example above, but with a big advantage that, a config object is passed around
 to collect information from global flags and the dataset, in order to
