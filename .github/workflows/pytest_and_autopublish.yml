@@ -53,5 +53,5 @@ jobs:
     - uses: etils-actions/pypi-auto-publish@v1
       with:
         pypi-token: ${{ secrets.PYPI_API_TOKEN }}
-        gh-token: ${{ secrets.GITHUB_TOKEN }}
+        gh-token: ${{ secrets.FOR_JESTIMATOR_RELEASE }}
         parse-changelog: true
