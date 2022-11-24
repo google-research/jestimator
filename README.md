@@ -1,5 +1,8 @@
 # Amos and JEstimator
 
+[![Unittests & Auto-publish](https://github.com/google-research/jestimator/actions/workflows/pytest_and_autopublish.yml/badge.svg)](https://github.com/google-research/jestimator/actions/workflows/pytest_and_autopublish.yml)
+[![PyPI version](https://badge.fury.io/py/jestimator.svg)](https://badge.fury.io/py/jestimator)
+
 *This is not an officially supported Google product.*
 
 This is the source code for the paper "[Amos: An Adam-style Optimizer with
