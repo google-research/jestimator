@@ -16,19 +16,19 @@ r"""A toy linear regression model.
 
 Using jestimator as the entry point.
 
-# For debug run locally with blaze:
+# For debug run locally:
 
 ## Train:
 
 ```
-python "jestimator/\
-estimator.py" \
+PYTHONPATH=. python3 \
+jestimator/estimator.py \
   --module_imp="jestimator.models.linear_regression.linear_regression" \
   --module_config="jestimator/models/linear_regression/\
 linear_regression.py" \
   --train_pattern="dummy://" \
   --valid_pattern="dummy://" \
-  --model_dir="$HOME/models/linear_regression" \
+  --model_dir="$HOME/experiments/linear_regression/models" \
   --train_batch_size=4 --valid_batch_size=4 \
   --max_train_steps=200 --train_shuffle_buf=32 \
   --check_every_steps=10 --logtostderr
@@ -37,13 +37,13 @@ linear_regression.py" \
 ## Eval:
 
 ```
-python "jestimator/\
-estimator.py" \
+PYTHONPATH=. python3 \
+jestimator/estimator.py \
   --module_imp="jestimator.models.linear_regression.linear_regression" \
   --module_config="jestimator/models/linear_regression/\
 linear_regression.py" \
   --eval_pattern="dummy://" \
-  --model_dir="$HOME/models/linear_regression" \
+  --model_dir="$HOME/experiments/linear_regression/models" \
   --eval_batch_size=4 \
   --logtostderr
 ```
@@ -51,13 +51,13 @@ linear_regression.py" \
 ## Predict:
 
 ```
-python "jestimator/\
-estimator.py" \
+PYTHONPATH=. python3 \
+jestimator/estimator.py \
   --module_imp="jestimator.models.linear_regression.linear_regression" \
   --module_config="jestimator/models/linear_regression/\
 linear_regression.py" \
   --pred_pattern="dummy://" \
-  --model_dir="$HOME/models/linear_regression" \
+  --model_dir="$HOME/experiments/linear_regression/models" \
   --pred_batch_size=4 \
   --logtostderr
 ```

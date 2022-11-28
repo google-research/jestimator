@@ -16,17 +16,17 @@ r"""Language modeling on PTB-like datasets.
 
 Using jestimator as the entry point.
 
-# For debug run locally with blaze:
+# For debug run locally:
 
 ## Train:
 
 ```
-python jestimator/estimator.py \
+PYTHONPATH=. python3 jestimator/estimator.py \
   --module_imp="jestimator.models.lstm.lm" \
   --module_config="jestimator/models/lstm/lm.py" \
-  --module_config.vocab_path="/path/to/data/ptb/vocab.txt" \
-  --train_pattern="/path/to/data/ptb/ptb.train.txt"\
-  --model_dir="$HOME/models/ptb_lstm" \
+  --module_config.vocab_path="jestimator/models/lstm/ptb/vocab.txt" \
+  --train_pattern="jestimator/models/lstm/ptb/ptb.train.txt"\
+  --model_dir="$HOME/experiments/ptb_lstm/models" \
   --train_batch_size=64 --train_consecutive=113 \
   --check_every_steps=10 --logtostderr
 ```
@@ -34,12 +34,12 @@ python jestimator/estimator.py \
 ## Eval:
 
 ```
-python jestimator/estimator.py \
+PYTHONPATH=. python3 jestimator/estimator.py \
   --module_imp="jestimator.models.lstm.lm" \
   --module_config="jestimator/models/lstm/lm.py" \
-  --module_config.vocab_path="/path/to/data/ptb/vocab.txt" \
-  --eval_pattern="/path/to/data/ptb/ptb.valid.txt" \
-  --model_dir="$HOME/models/ptb_lstm" \
+  --module_config.vocab_path="jestimator/models/lstm/ptb/vocab.txt" \
+  --eval_pattern="jestimator/models/lstm/ptb/ptb.valid.txt" \
+  --model_dir="$HOME/experiments/ptb_lstm/models" \
   --eval_batch_size=1 --logtostderr
 ```
 """
