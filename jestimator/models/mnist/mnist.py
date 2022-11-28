@@ -157,7 +157,7 @@ def get_train_state(config, rng):
   eta_fn = amos_helper.params_fn_from_assign_map(
       {
           '.*/bias': 0.5,
-          '.*Conv_0/kernel': 'sqrt(8/prod(SHAPE[:-1]))',
+          '.*Conv_0/kernel': 'sqrt(8/prod(SHAPE[:-2]))',
           '.*Conv_1/kernel': 'sqrt(2/prod(SHAPE[:-1]))',
           '.*Dense_0/kernel': 'sqrt(2/SHAPE[0])',
           '.*Dense_1/kernel': 'sqrt(1/SHAPE[0])',

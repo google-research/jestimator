@@ -36,7 +36,7 @@ In order to demonstrate the usage, we will apply Amos to MNIST. It is based on
 Flax's official
 [MNIST Example](https://github.com/google/flax/tree/main/examples/mnist), and
 you can find the code in a jupyter notebook
-[here](https://github.com/google-research/jestimator/tree/main/jestimator/models/mnist).
+[here](https://github.com/google-research/jestimator/tree/main/jestimator/models/mnist/mnist.ipynb).
 
 ### 1. Imports
 
@@ -289,7 +289,7 @@ We provide this
 to demonstrate how to write modeling code with JEstimator. It is much like the
 example above, but with a big advantage that, a config object is passed around
 to collect information from global flags and the dataset, in order to
-dynamically setup modeling.
+dynamically setup modeling. This makes it easier to apply the model to different datasets; for example, one can immediately try the [emnist](https://www.tensorflow.org/datasets/catalog/emnist) or [eurosat](https://www.tensorflow.org/datasets/catalog/eurosat) datasets simply by changing a command-line argument, without modifying the code.
 
 With the following command, we can start a job to train on MNIST, log every 100
 steps, and save the checkpoints to $HOME/experiments/mnist/models:
