@@ -24,7 +24,7 @@ class AmosHelperTest(absltest.TestCase):
   def test_evaluate(self):
     shape = (7, 8, 9)
     x = amos_helper.evaluate('sqrt(1 / prod(SHAPE[:-1]))', shape)
-    y = math.sqrt(1 / math.prod(shape[:-1]))
+    y = math.sqrt(1 / (shape[0] * shape[1]))
     self.assertEqual(x, y)
 
     x = amos_helper.evaluate('(1, 1, SHAPE[2])', shape)

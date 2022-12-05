@@ -25,20 +25,21 @@ schedule.
 """
 from typing import Any, Callable, NamedTuple, Optional, Tuple, Union
 
-import chex
 from flax.serialization import from_state_dict, to_state_dict  # pylint: disable=g-multiple-import
 from flax.traverse_util import empty_node, flatten_dict, unflatten_dict  # pylint: disable=g-multiple-import
 import jax
 import jax.numpy as jnp
 import optax
 
+Array = jnp.ndarray
+Shape = Tuple[int, ...]
 ScalarOrSchedule = Union[float, optax.Schedule]
-ParamsFn = Callable[[Tuple[str, ...], Tuple[int, ...]], Any]
+ParamsFn = Callable[[Tuple[str, ...], Shape], Any]
 
 
 class ScaleByAmosState(NamedTuple):
   """State for the Amos algorithm."""
-  count: chex.Array  # shape=(), dtype=jnp.int32.
+  count: Array  # shape=(), dtype=jnp.int32.
   v: optax.Updates
   b: optax.Updates
 
@@ -49,6 +50,8 @@ def scale_by_amos(
     shape_fn: Optional[ParamsFn] = None,
     beta: float = 0.999,
     extra_l2: float = 0.,
+    d_coef: float = 0.25,
+    c_coef: float = 0.25,
     epsilon: float = 1. / (1 << 125),
 ) -> optax.GradientTransformation:
   """Rescale updates according to the Amos algorithm."""
@@ -74,12 +77,6 @@ def scale_by_amos(
     b = from_state_dict(params, _unflatten(flat_b))
     return ScaleByAmosState(count=jnp.array(0), v=v, b=b)
 
-  def decay_factor_c(b: chex.Array, xi: chex.Array) -> chex.Array:
-    return jax.lax.rsqrt(1. + 0.25 * jnp.sqrt(xi) * b)
-
-  def decay_factor_d(b: chex.Array, init_lr: chex.Array) -> chex.Array:
-    return jnp.reciprocal(1. + 0.25 * jnp.sqrt(init_lr) * b)
-
   def update_fn(updates, state, params):
     count = optax.safe_int32_increment(state.count)
     if callable(learning_rate):
@@ -87,6 +84,8 @@ def scale_by_amos(
     else:
       xi = learning_rate
     bias_correction = 1. - beta**count
+    xi2 = jnp.square(xi)
+    c_coef_sqrt_xi = c_coef * jnp.sqrt(xi)
 
     flat_grad = _flatten(to_state_dict(updates), keep_empty_nodes=True)
     flat_v = _flatten(to_state_dict(state.v), keep_empty_nodes=True)
@@ -105,11 +104,14 @@ def scale_by_amos(
       rcpl_v_hat = bias_correction / jnp.maximum(v, epsilon)
 
       b = flat_b[name]
-      gamma = decay_factor_c(b, xi) * jnp.square(xi) * rcpl_v_hat * g2
-      l2_regularization = (0.5 * gamma + extra_l2) * theta
+      decay_factor_c = jax.lax.rsqrt(1. + c_coef_sqrt_xi * b)
+      gamma = decay_factor_c * xi2 * rcpl_v_hat * g2
+
       init_lr = xi * eta_fn(name, theta.shape)
-      flat_grad[name] = decay_factor_d(b, init_lr) * (
-          -init_lr * jnp.sqrt(rcpl_v_hat) * grad - l2_regularization)
+      decay_factor_d = jnp.reciprocal(1. + d_coef * jnp.sqrt(init_lr) * b)
+      l2_regularization = (-0.5 * gamma - extra_l2) * theta
+      flat_grad[name] = decay_factor_d * (
+          l2_regularization - init_lr * jnp.sqrt(rcpl_v_hat) * grad)
       flat_b[name] = b + gamma * (1. + b)
 
     updates = from_state_dict(updates, _unflatten(flat_grad))
@@ -139,9 +141,11 @@ def amos(
     eta_fn: ParamsFn,
     shape_fn: Optional[ParamsFn] = None,
     beta: float = 0.999,
-    extra_l2: float = 0.,
     momentum: Optional[float] = None,
     clip_value: Optional[float] = None,
+    extra_l2: float = 0.,
+    d_coef: float = 0.25,
+    c_coef: float = 0.25,
     epsilon: float = 1. / (1 << 125),
 ) -> optax.GradientTransformation:
   """The full Amos optimizer with optional gradient clipping and momentum.
@@ -162,9 +166,11 @@ def amos(
       save memory.
     beta: A float slightly < 1. We recommend setting `1 - beta` to the same
       order of magnitude as the learning rate. Defaults to 0.999.
-    extra_l2: Addional L2 regularization (experimental). Defaults to 0.
     momentum: Exponential decay rate for optional moving average of updates.
     clip_value: Optional gradient clipping value.
+    extra_l2: Addional L2 regularization (experimental). Defaults to 0.
+    d_coef: Coefficient for decay_factor_d. Defaults to 0.25.
+    c_coef: Coefficient for decay_factor_c. Defaults to 0.25.
     epsilon: The smallest positive normal to prevent division by 0.
 
   Returns:
@@ -180,6 +186,8 @@ def amos(
           shape_fn=shape_fn,
           beta=beta,
           extra_l2=extra_l2,
+          d_coef=d_coef,
+          c_coef=c_coef,
           epsilon=epsilon))
   if momentum is not None and momentum > 0.:
     tx.append(optax.ema(momentum, debias=False))

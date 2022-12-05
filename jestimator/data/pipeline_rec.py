@@ -57,47 +57,30 @@ def pipeline_from_filenames(
   for path in filenames:
     d = dataset_fn(path)
     if cache and num_take == -1:
-      d = d.cache()
-    ds.append(d)
-  fd = tf.data.Dataset.from_tensor_slices(ds)
-
-  if interleave and num_files > 1:
-    fd = fd.shuffle(num_files, seed=num_files + 11)
-  fd = fd.repeat(epochs)
-
-  if interleave and num_files > 1:
-    if shard_data:
-      indices = tf.data.Dataset.range(num_files * shard_num).repeat()
-      fd = tf.data.Dataset.zip((fd, indices))
-
-      def map_fn(d, i):
-        d = d.shard(shard_num, (shard_index + i // num_files) % shard_num)
-        if feature_fn is not None:
-          d = d.map(feature_fn, num_parallel_calls=tf.data.AUTOTUNE)
-        return d
-
-    else:
-
-      def map_fn(d):
-        if feature_fn is not None:
-          d = d.map(feature_fn, num_parallel_calls=tf.data.AUTOTUNE)
-        return d
-
-    ret = fd.interleave(
-        map_fn, deterministic=False, num_parallel_calls=tf.data.AUTOTUNE)
-  else:
-
-    def map_fn(d):
       if feature_fn is not None:
         d = d.map(feature_fn, num_parallel_calls=tf.data.AUTOTUNE)
-      return d
+      d = d.cache()
+    ds.append(d)
 
-    ret = fd.flat_map(map_fn)
-    if shard_data:
-      ret = ret.shard(shard_num, shard_index)
+  if interleave and num_files > 1:
+    rnd = tf.data.Dataset.random(seed=num_files + 11)
+    if epochs is not None:
+      rnd = rnd.take(epochs)
+    ret = rnd.flat_map(
+        lambda x: tf.data.Dataset.sample_from_datasets(ds, seed=x))
+  else:
+    ret = ds[0]
+    for d in ds[1:]:
+      ret = ret.concatenate(d)
+    ret = ret.repeat(epochs)
+  if shard_data:
+    ret = ret.shard(shard_num, shard_index)
 
   ret = ret.take(num_take)
-  if num_take >= 0 and cache:
+  if not cache or num_take != -1:
+    if feature_fn is not None:
+      ret = ret.map(feature_fn, num_parallel_calls=tf.data.AUTOTUNE)
+  if cache and num_take != -1:
     ret = ret.cache()
   return ret
 

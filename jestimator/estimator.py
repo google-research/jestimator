@@ -140,7 +140,7 @@ def get_mode_heuristic(ckpt_path):
   else:
     mode = 'predict'
 
-  if mode != 'train' and FLAGS.model_dir is not None:
+  if mode in ('eval_once', 'predict') and FLAGS.model_dir is not None:
     assert tf.io.gfile.exists(FLAGS.model_dir), 'model_dir does not exist.'
   return mode
 
@@ -166,7 +166,6 @@ def train_data(config, partitioner):
       data_utils.get_dataset_filenames(FLAGS.train_pattern),
       config.train_data_fn,
       partitioner.get_data_layout(FLAGS.train_batch_size),
-      drop_remainder=True,
       shuffle_buf=FLAGS.train_shuffle_buf,
       consecutive=FLAGS.train_consecutive,
       shard_source=True,
@@ -185,7 +184,6 @@ def valid_data(config, partitioner):
       valid_filenames,
       config.valid_data_fn,
       partitioner.get_data_layout(FLAGS.valid_batch_size),
-      drop_remainder=True,
       num_take=FLAGS.num_valid_examples)
   logging.info('valid_steps: %d', valid_steps)
   logging.info('valid_data: %s', valid_ds.element_spec)
@@ -220,7 +218,7 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
       in_axis_resources=in_axis_res,
       out_axis_resources=(state_mesh, None),  # (state, metrics)
       static_argnums=(0,),
-      donate_argnums=(1, 2, 3))
+      donate_argnums=(2, 3))
   metrics = state.metrics_mod.init(rng)
   train_fn = partitioner.compile(  # (batch, state, metrics)->(state, metrics)
       train_fn, config.frozen, next(iter(train_ds)), state, metrics)
@@ -230,7 +228,7 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
         in_axis_resources=in_axis_res,
         out_axis_resources=None,
         static_argnums=(0,),
-        donate_argnums=(1, 3))
+        donate_argnums=(3,))
     valid_fn = partitioner.compile(  # (batch, state, metrics)->metrics
         valid_fn, config.frozen, next(iter(valid_ds)), state, metrics)
   del in_axis_res, state_mesh
@@ -272,7 +270,7 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
         if FLAGS.dry_run:
           next(train_iter)
         else:
-          with jax.profiler.StepTraceAnnotation('train', step_num=step + i):
+          with jax.profiler.StepTraceAnnotation('train', step_num=i):
             state, metrics = train_fn(next(train_iter), state, metrics)
     except StopIteration:
       step = state.step
@@ -292,6 +290,7 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
           next(valid_iter)
         else:
           metrics = valid_fn(next(valid_iter), state, metrics)
+      next(valid_iter, None)
 
     if jax.process_index() == 0:
       default_monitor_train(state, metrics, tb_writer)
@@ -311,7 +310,6 @@ def eval_data(config, partitioner):
       filenames,
       config.eval_data_fn,
       partitioner.get_data_layout(FLAGS.eval_batch_size),
-      drop_remainder=True,
       epochs=None)  # Always repeat and drop_remainder; iter steps.
   logging.info('eval_steps: %d', steps)
   logging.info('eval_data: %s', eval_ds.element_spec)
@@ -327,7 +325,6 @@ def pred_data(config, partitioner):
       filenames,
       config.pred_data_fn,
       partitioner.get_data_layout(FLAGS.pred_batch_size),
-      drop_remainder=True,
       epochs=None)  # Always repeat and drop_remainder; iter steps.
   logging.info('pred_steps: %d', steps)
   logging.info('pred_data: %s', pred_ds.element_spec)
@@ -348,7 +345,7 @@ def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config):
       gold, batch = next(eval_iter)
       if not FLAGS.dry_run:
         state = infer_fn(batch, state)
-        del batch
+      del batch
       infer = state.ret
       if infer is not None:
         state = state.replace(ret=None)
@@ -357,6 +354,7 @@ def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config):
           gold, infer = jax.tree_map(lambda v: v[:last_size], (gold, infer))
         if jax.process_index() == 0:
           evaluator.update_state(gold, infer)
+    next(eval_iter, None)
 
     if jax.process_index() == 0:
       eval_metrics = evaluator.result()
@@ -460,6 +458,7 @@ def predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config):
         infer = jax.tree_map(lambda v: v[:last_size], infer)
       if jax.process_index() == 0:
         predictor.consume(infer)
+  next(pred_iter, None)
 
   if jax.process_index() == 0:
     predictor.complete()
@@ -481,7 +480,7 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
       in_axis_resources=(partitioner.data_partition_spec, state_mesh),
       out_axis_resources=state_mesh,
       static_argnums=(0,),
-      donate_argnums=(1, 2))
+      donate_argnums=(2,))
   del state_mesh
   if mode.is_eval and FLAGS.eval_pattern is not None:
     _, batch = next(iter(eval_ds))

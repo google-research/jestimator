@@ -106,14 +106,20 @@ class InferState(struct.PyTreeNode):
 
   def state_dict(self) -> Mapping[str, Any]:
     """Returns a mutable representation of the state for checkpointing."""
-    return {'target': unfreeze(self.params), 'state': {'step': self.step}}
+    ret = {'target': unfreeze(self.params), 'state': {'step': self.step}}
+    if self.mutable():
+      ret['flax_mutables'] = unfreeze(self._vars)
+    return ret
 
   def restore_state(self, state_dict: Mapping[str, Any]) -> 'InferState':
     """Restores the object state from a state dict."""
-    return self.replace(
+    ret = self.replace(
         step=get_local_data(state_dict['state']['step']),
         params=freeze(state_dict['target']),
     )
+    if 'flax_mutables' in state_dict:
+      ret = ret.replace(_vars=freeze(state_dict['flax_mutables']))
+    return ret
 
   def as_logical_axes(self) -> 'InferState':
     """Replaces `param` and `param-states` with their logical axis names."""
@@ -231,13 +237,16 @@ class TrainState(struct.PyTreeNode):
     # To be compatible with t5x.optimizers.OptaxWrapper.state_dict(),
     #  this step removes any empty dict (recursively) in the state dict.
     param_states = unflatten_dict(flatten_dict(param_states))
-    return {
+    ret = {
         'target': unfreeze(self.params),
         'state': {
             'step': self.step,
             'param_states': param_states,
         }
     }
+    if self.mutable():
+      ret['flax_mutables'] = unfreeze(self._vars)
+    return ret
 
   def restore_state(self, state_dict: Mapping[str, Any]) -> 'TrainState':
     """Restores the object state from a state dict."""
@@ -256,11 +265,14 @@ class TrainState(struct.PyTreeNode):
       flat_y[k] = v
     opt_state = from_state_dict(self.opt_state, unflatten_dict(flat_y))
 
-    return self.replace(
+    ret = self.replace(
         step=get_local_data(state_dict['state']['step']),
         params=freeze(state_dict['target']),
         opt_state=opt_state,
     )
+    if 'flax_mutables' in state_dict:
+      ret = ret.replace(_vars=freeze(state_dict['flax_mutables']))
+    return ret
 
   def as_logical_axes(self) -> 'TrainState':
     """Replaces `param` and `param-states` with their logical axis names."""

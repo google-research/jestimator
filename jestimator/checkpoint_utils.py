@@ -50,11 +50,12 @@ def partial_restore(state,
         flat_ret[k] = u[:v.shape[0]]
 
   params = freeze(unflatten_dict(flat_ret))
+  state = state.replace(params=params)
+  if 'flax_mutables' in ckpt_dict:
+    state = state.replace(_vars=freeze(ckpt_dict['flax_mutables']))
   if load_step:
-    return state.replace(
-        step=get_local_data(ckpt_dict['state']['step']), params=params)
-
-  return state.replace(params=params)
+    state = state.replace(step=get_local_data(ckpt_dict['state']['step']))
+  return state
 
 
 def latest_ckpt_path(model_dir: Optional[str] = None,

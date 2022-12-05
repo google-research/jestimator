@@ -15,7 +15,6 @@
 """Utility functions for building data pipelines."""
 from typing import Callable, List, Sequence, Tuple, Union
 
-from absl import logging
 import jax
 from jax.experimental.multihost_utils import host_local_array_to_global_array
 import tensorflow as tf
@@ -112,7 +111,6 @@ def transpose_dataset(d: tf.data.Dataset, size_d: int, size_per_elem: int,
 def create_data_pipeline(filenames: List[str],
                          data_fn: Callable[..., tf.data.Dataset],
                          data_layout,
-                         drop_remainder=False,
                          shuffle_buf=None,
                          consecutive=None,
                          shard_source=False,
@@ -126,7 +124,6 @@ def create_data_pipeline(filenames: List[str],
     filenames: List of data file names.
     data_fn: A function that returns a tf dataset.
     data_layout: Partitioning data layout.
-    drop_remainder: bool. Whether to drop the remainder batch.
     shuffle_buf: int. Buffer size for shuffling. Do not shuffle if None.
     consecutive: int. If not None, every n batches are consecutive.
     shard_source: bool. For multiple workers, whether to shard the data source
@@ -144,64 +141,31 @@ def create_data_pipeline(filenames: List[str],
     bs, r = divmod(batch_size, num_shards)
     assert r == 0, f'{batch_size} % {num_shards} != 0'
 
-  if num_shards > 1:
-    if not drop_remainder:
-      logging.warning('`drop_remainder` is automatically set to True for '
-                      'distributed dataset.')
-
-    if consecutive is None:
-      if shard_source:
-        d = data_fn(
-            filenames, shard_num=num_shards, shard_index=shard_id, **kwargs)
-      else:
-        d = data_fn(filenames, **kwargs)
-
-      if shuffle_buf is not None:
-        d = d.shuffle(shuffle_buf, seed=shuffle_buf)
-      d = d.batch(bs, drop_remainder=True)
-      if not shard_source:
-        d = d.shard(num_shards, shard_id)
-
+  if consecutive is None:
+    if shard_source:
+      d = data_fn(
+          filenames, shard_num=num_shards, shard_index=shard_id, **kwargs)
     else:
-      epochs = kwargs.pop('epochs', 1)
       d = data_fn(filenames, **kwargs)
-      d = d.window(consecutive, drop_remainder=True)
-      d = d.repeat(epochs).shard(num_shards, shard_id)
-      if shuffle_buf is not None:
-        d = d.shuffle(shuffle_buf, seed=shuffle_buf)
-      d = d.window(bs, drop_remainder=True)
-      d = d.flat_map(lambda x: transpose_dataset(x, bs, consecutive, bs))
 
-    d = d.prefetch(tf.data.AUTOTUNE)
-    return d
+    if shuffle_buf is not None:
+      d = d.shuffle(shuffle_buf, seed=shuffle_buf)
+    d = d.batch(bs, drop_remainder=True)
+    if num_shards > 1 and not shard_source:
+      d = d.shard(num_shards, shard_id)
 
   else:
-    if consecutive is None:
-      d = data_fn(filenames, **kwargs)
-      if shuffle_buf is not None:
-        d = d.shuffle(shuffle_buf, seed=shuffle_buf)
-      if batch_size is not None:
-        d = d.batch(batch_size, drop_remainder=drop_remainder)
+    epochs = kwargs.pop('epochs', 1)
+    d = data_fn(filenames, **kwargs)
+    d = d.window(consecutive, drop_remainder=True).repeat(epochs)
+    if num_shards > 1:
+      d = d.shard(num_shards, shard_id)
+    if shuffle_buf is not None:
+      d = d.shuffle(shuffle_buf, seed=shuffle_buf)
+    d = d.window(bs, drop_remainder=True)
+    d = d.flat_map(lambda x: transpose_dataset(x, bs, consecutive, bs))
 
-    else:
-      if not drop_remainder:
-        logging.warning('`drop_remainder` is set to True to'
-                        ' produce consecutive batches.')
-      epochs = kwargs.pop('epochs', 1)
-      d = data_fn(filenames, **kwargs)
-      d = d.window(consecutive, drop_remainder=True)
-      d = d.repeat(epochs)
-      if shuffle_buf is not None:
-        d = d.shuffle(shuffle_buf, seed=shuffle_buf)
-      if batch_size is None:
-        d = d.flat_map(lambda x: x)
-      else:
-        d = d.window(batch_size, drop_remainder=True)
-        d = d.flat_map(
-            lambda x: transpose_dataset(x, batch_size, consecutive, batch_size))
-
-    d = d.prefetch(tf.data.AUTOTUNE)
-
+  d = d.prefetch(tf.data.AUTOTUNE)
   return d
 
 
@@ -214,8 +178,10 @@ class DataIterable(object):
 
   def __iter__(self):
     ret = self.x.as_numpy_iterator()
-    if jax.config.jax_array:
-      mesh = self.partitioner.mesh
-      spec = self.partitioner.data_partition_spec
-      ret = (host_local_array_to_global_array(x, mesh, spec) for x in ret)
-    return ret
+    if not jax.config.jax_array:
+      return ret
+
+    mesh = self.partitioner.mesh
+    spec = self.partitioner.data_partition_spec
+    for batch in ret:
+      yield host_local_array_to_global_array(batch, mesh, spec)

@@ -23,9 +23,20 @@ To release a new version (e.g. from `1.0.0` -> `2.0.0`):
 
 ## [Unreleased]
 
-## [0.1.0] - 2022-01-01
+## [0.3.3] - 2022-12-01
 
-* Initial release
+* Python 3.7 compatibility.
+* Add `d_coef` and `c_coef` to Amos hyper-parameter.
+* Support for flax_mutables in checkpointing.
+* Bug fix data/pipeline_rec and simplified data_utils code.
 
-[Unreleased]: https://github.com/google-research/jestimator/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/google-research/jestimator/releases/tag/v0.1.0
+## [0.3.2] - 2022-11-01
+
+* The Amos optimizer implementation stick to the paper.
+* Initial Pypi package.
+* Setup Github workflow for unit test and auto-publish.
+* MNIST examples.
+
+[Unreleased]: https://github.com/google-research/jestimator/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/google-research/jestimator/releases/tag/v0.3.3
+[0.3.2]: https://github.com/google-research/jestimator/releases/tag/v0.3.2

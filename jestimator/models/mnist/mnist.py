@@ -44,6 +44,7 @@ PYTHONPATH=. python3 jestimator/estimator.py \
   --check_ckpt_every_secs=1 \
   --save_high="test_accuracy" \
   --logtostderr
+```
 """
 import math
 import re

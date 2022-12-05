@@ -22,7 +22,8 @@ from typing import Any, Dict, Tuple
 from absl import logging
 import jax
 from jax.experimental.pjit import PartitionSpec
-from jestimator.amos import ParamsFn, ScaleByAmosState  # pylint: disable=g-multiple-import
+from jestimator.amos import Shape, ParamsFn, ScaleByAmosState  # pylint: disable=g-multiple-import
+import numpy
 
 _BIN_OP_MAP = {
     ast.Add: op.add,
@@ -35,8 +36,8 @@ _BIN_OP_MAP = {
 }
 
 
-def evaluate(s: str, shape: Tuple[int, ...]):
-  """Evaluate simple expression. Allows 'SHAPE' referring to variable shape."""
+def evaluate(s: str, shape: Shape):
+  """Evaluate simple expression. Allow 'SHAPE' referring to variable shape."""
 
   def _evaluate(node):
     if node is None:
@@ -50,13 +51,22 @@ def evaluate(s: str, shape: Tuple[int, ...]):
     if isinstance(node, ast.Call):
       func_name = node.func
       assert isinstance(func_name, ast.Name)
-      func = getattr(math, func_name.id)
+      func = getattr(math, func_name.id, None)
+      if func is None:
+        func = getattr(numpy, func_name.id)
+
       assert not node.keywords
       args = [_evaluate(x) for x in node.args]
       return func(*args)
 
     if isinstance(node, ast.Constant):
       return node.value
+
+    if isinstance(node, ast.Num):  # Python 3.7 compatibility
+      return node.n
+
+    if isinstance(node, ast.Index):  # Python 3.8 compatibility
+      return _evaluate(node.value)
 
     if isinstance(node, ast.Slice):
       return slice(
@@ -102,7 +112,7 @@ def params_fn_from_assign_map(assign_map: Dict[str, Any],
     params_fn: A function that maps each variable name and shape to a value.
   """
 
-  def params_fn(name: Tuple[str, ...], shape: Tuple[int, ...]):
+  def params_fn(name: Tuple[str, ...], shape: Shape):
     name_str = name_sep.join(name)
     for regex, value in assign_map.items():
       if re.match(regex, name_str):
