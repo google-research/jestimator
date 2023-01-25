@@ -150,7 +150,8 @@ def create_data_pipeline(filenames: List[str],
 
     if shuffle_buf is not None:
       d = d.shuffle(shuffle_buf, seed=shuffle_buf)
-    d = d.batch(bs, drop_remainder=True)
+    if batch_size is not None:
+      d = d.batch(bs, drop_remainder=True)
     if num_shards > 1 and not shard_source:
       d = d.shard(num_shards, shard_id)
 
@@ -162,8 +163,11 @@ def create_data_pipeline(filenames: List[str],
       d = d.shard(num_shards, shard_id)
     if shuffle_buf is not None:
       d = d.shuffle(shuffle_buf, seed=shuffle_buf)
-    d = d.window(bs, drop_remainder=True)
-    d = d.flat_map(lambda x: transpose_dataset(x, bs, consecutive, bs))
+    if batch_size is None:
+      d = d.flat_map(lambda x: x)
+    else:
+      d = d.window(bs, drop_remainder=True)
+      d = d.flat_map(lambda x: transpose_dataset(x, bs, consecutive, bs))
 
   d = d.prefetch(tf.data.AUTOTUNE)
   return d
@@ -183,5 +187,5 @@ class DataIterable(object):
 
     mesh = self.partitioner.mesh
     spec = self.partitioner.data_partition_spec
-    for batch in ret:
-      yield host_local_array_to_global_array(batch, mesh, spec)
+    it = (host_local_array_to_global_array(batch, mesh, spec) for batch in ret)
+    return it

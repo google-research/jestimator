@@ -13,10 +13,10 @@ It implements **Amos**, an optimizer compatible with the
 [optax](https://github.com/deepmind/optax) library, and **JEstimator**, a
 light-weight library with a `tf.Estimator`-like interface to manage
 [T5X](https://github.com/google-research/t5x)-compatible checkpoints for machine
-learning programs in [Jax](https://github.com/google/jax), which we use to run
+learning programs in [JAX](https://github.com/google/jax), which we use to run
 experiments in the paper.
 
-## Quick Start
+## Quickstart
 
 ```
 pip install jestimator
@@ -26,10 +26,10 @@ It will install the Amos optimizer implemented in the jestimator lib.
 
 ## Usage of Amos
 
-This implementation of Amos is used with [Jax](https://github.com/google/jax), a
+This implementation of Amos is used with [JAX](https://github.com/google/jax), a
 high-performance numerical computing library with automatic differentiation, for
 machine learning research. The API of Amos is compatible with
-[optax](https://github.com/deepmind/optax), a library of Jax optimizers
+[optax](https://github.com/deepmind/optax), a library of JAX optimizers
 (hopefully Amos will be integrated into optax in the near future).
 
 In order to demonstrate the usage, we will apply Amos to MNIST. It is based on

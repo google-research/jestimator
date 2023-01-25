@@ -24,6 +24,7 @@ from flax.traverse_util import flatten_dict, unflatten_dict  # pylint: disable=g
 import jax
 from jax.experimental import multihost_utils
 from t5x.utils import get_local_data
+from tensorflow import errors
 from tensorflow.io import gfile
 
 
@@ -92,7 +93,10 @@ def latest_ckpt_path(model_dir: Optional[str] = None,
 
     if jax.process_index() == 0:
       for tmp in gfile.glob(os.path.join(model_dir, f'{prefix}*tmp*')):
-        gfile.rmtree(tmp)
+        try:
+          gfile.rmtree(tmp)
+        except errors.NotFoundError:
+          pass
     multihost_utils.sync_global_devices(
         f'jestimator:latest_ckpt_path:remove_tmp_ckpts:{model_dir}')
     latest = checkpoints.latest_checkpoint(model_dir, prefix=prefix)
