@@ -305,7 +305,15 @@ class MeanMetric(nn.Module):
     self.count = self.variable('metrics', f'{self.metric_name}_count', init_fn)
 
   def __call__(self):
-    return self.total.value / self.count.value
+    total = self.total.value
+    count = self.count.value
+    if isinstance(total, jax.core.Tracer) or isinstance(count, jax.core.Tracer):
+      return total / count
+    total = jax.device_get(total)
+    count = jax.device_get(count)
+    if total == 0. and count == 0.:
+      return 0.
+    return total / count
 
   def update(self, dtotal, dcount=1.):
     self.total.value = self.total.value + dtotal

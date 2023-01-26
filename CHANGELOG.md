@@ -23,6 +23,8 @@ To release a new version (e.g. from `1.0.0` -> `2.0.0`):
 
 ## [Unreleased]
 
+* Multi-pod debug for estimator.
+
 ## [0.3.3] - 2022-12-01
 
 * Python 3.7 compatibility.

@@ -190,16 +190,9 @@ def valid_data(config, partitioner):
   return data_utils.DataIterable(valid_ds, partitioner), valid_steps
 
 
-def default_monitor_train(state, metrics, tb_writer):
-  """Write scales of variables to tensorboard and log metrics."""
-  step = state.step
-  with tb_writer.as_default():
-    for k, v in flatten_dict(state.params, sep='/').items():
-      r = jax.device_get(jnp.sqrt(jnp.mean(jnp.square(v))))
-      tf.summary.scalar(f'params_scale/{k}', r, step=step)
-    for k, v in state.metrics_mod.apply(metrics).items():
-      logging.info('%s at step %d: %f', k, step, v)
-      tf.summary.scalar(f'train/{k}', v, step=step)
+def calc_params_scale(params):
+  return jax.tree_util.tree_map(lambda v: jnp.sqrt(jnp.mean(jnp.square(v))),
+                                params)
 
 
 def train(ckpt_path, same_dir, rng, module, config, partitioner):
@@ -231,6 +224,13 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
         donate_argnums=(3,))
     valid_fn = partitioner.compile(  # (batch, state, metrics)->metrics
         valid_fn, config.frozen, next(iter(valid_ds)), state, metrics)
+  calc_params_scale_fn = partitioner.partition(
+      calc_params_scale,
+      in_axis_resources=(state_mesh.params,),
+      out_axis_resources=None,
+      static_argnums=(),
+      donate_argnums=())
+  calc_params_scale_fn = partitioner.compile(calc_params_scale_fn, state.params)
   del in_axis_res, state_mesh
   logging.info('End compiling.')
 
@@ -246,7 +246,7 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
           load_step=FLAGS.train_load_step)
       state = state.replace(opt_state=state.tx.init(state.params))
 
-  step = state.step
+  step = jax.device_get(state.step)
   logging.info('Currently trained steps: %d', step)
   if ckpt_path is None or not same_dir:
     # Save the initial model as well.
@@ -273,11 +273,11 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
           with jax.profiler.StepTraceAnnotation('train', step_num=i):
             state, metrics = train_fn(next(train_iter), state, metrics)
     except StopIteration:
-      step = state.step
+      step = jax.device_get(state.step)
       ckpt_mgr.save(state)
       break
 
-    step = state.step
+    step = jax.device_get(state.step)
     ckpt_mgr.save(state)
     if (FLAGS.save_every_steps is not None and
         step % FLAGS.save_every_steps == 0):
@@ -292,8 +292,14 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
           metrics = valid_fn(next(valid_iter), state, metrics)
       next(valid_iter, None)
 
+    params_scale = calc_params_scale_fn(state.params)
     if jax.process_index() == 0:
-      default_monitor_train(state, metrics, tb_writer)
+      with tb_writer.as_default():
+        for k, v in flatten_dict(params_scale, sep='/').items():
+          tf.summary.scalar(f'params/{k}', jax.device_get(v), step=step)
+        for k, v in state.metrics_mod.apply(metrics).items():
+          logging.info('%s at step %d: %f', k, step, v)
+          tf.summary.scalar(f'train/{k}', v, step=step)
       if hasattr(module, 'monitor_train'):
         module.monitor_train(config, state, metrics, tb_writer)
 
@@ -359,7 +365,8 @@ def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config):
     if jax.process_index() == 0:
       eval_metrics = evaluator.result()
       for metric, score in eval_metrics.items():
-        logging.info('%s: %f at step %d', metric, score, state.step)
+        logging.info('%s: %f at step %d', metric, score,
+                     jax.device_get(state.step))
       return eval_metrics
 
   return evaluate_fn
@@ -371,7 +378,7 @@ def eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves):
   last_evaluated = checkpoint_utils.last_evaluated_ckpt(last_eval_path)
   if ckpt_path == last_evaluated and FLAGS.max_train_steps is not None:
     # Check if the last evaluated is the last checkpoint.
-    step = state.step
+    step = jax.device_get(state.step)
     if step >= FLAGS.max_train_steps:
       logging.info(
           'Last evaluated (%s) at step (%d) reached max_train_steps (%d);'
@@ -393,7 +400,7 @@ def eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves):
     except ValueError:
       continue
 
-    step = state.step
+    step = jax.device_get(state.step)
     eval_metrics = evaluate_fn(state)
     if jax.process_index() == 0:
       with tb_writer.as_default():
@@ -490,13 +497,14 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
   del batch
   logging.info('End compiling.')
 
-  if ckpt_path is None:
-    logging.warning('Model is random initialized.')
-  else:
-    state = checkpoint_utils.partial_restore(
-        state, checkpoints.load_t5x_checkpoint(ckpt_path), load_step=True)
-    if state.step == 0:
-      logging.warning('The step is 0 (model may not be trained).')
+  if mode != RunMode.EVAL_WAIT:
+    if ckpt_path is None:
+      logging.warning('Model is random initialized.')
+    else:
+      state = checkpoint_utils.partial_restore(
+          state, checkpoints.load_t5x_checkpoint(ckpt_path), load_step=True)
+      if jax.device_get(state.step) == 0:
+        logging.warning('The step is 0 (model may not be trained).')
 
   if mode.is_eval and FLAGS.eval_pattern is not None:
     evaluate_fn = get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn,
