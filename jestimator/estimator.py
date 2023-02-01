@@ -441,9 +441,6 @@ def eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves):
       logging.info(
           'Current step (%d) reached max_train_steps (%d);'
           ' stop waiting for evaluation.', step, FLAGS.max_train_steps)
-      if jax.process_index() == 0:
-        with tf.io.gfile.GFile(last_eval_path, 'w') as f:
-          f.write(ckpt_path)
       break
 
 

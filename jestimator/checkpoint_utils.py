@@ -160,11 +160,11 @@ def checkpoints_iterator_from_oldest(model_dir: str,
 
     for x in ckpts:
       if gfile.exists(x):
-        yield x
         last_evaluated = x
         if jax.process_index() == 0:
           with gfile.GFile(last_eval_path, 'w') as f:
             f.write(x)
+        yield x
 
     if not ckpts:
       time.sleep(min_interval_secs)
