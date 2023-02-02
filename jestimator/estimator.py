@@ -484,7 +484,7 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
       in_axis_resources=(partitioner.data_partition_spec, state_mesh),
       out_axis_resources=state_mesh,
       static_argnums=(0,),
-      donate_argnums=(2,))
+  )
   del state_mesh
   if mode.is_eval and FLAGS.eval_pattern is not None:
     _, batch = next(iter(eval_ds))
