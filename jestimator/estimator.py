@@ -30,10 +30,10 @@ from absl import flags
 from absl import logging
 from flax.traverse_util import flatten_dict
 import jax
-from jax.experimental import PartitionSpec
 from jax.experimental.multihost_utils import broadcast_one_to_all
 from jax.experimental.multihost_utils import process_allgather
 import jax.numpy as jnp
+from jax.sharding import PartitionSpec
 from jestimator import checkpoint_utils
 from jestimator import data_utils
 from ml_collections.config_flags import config_flags

@@ -21,7 +21,7 @@ from typing import Any, Dict, Tuple
 
 from absl import logging
 import jax
-from jax.experimental.pjit import PartitionSpec
+from jax.sharding import PartitionSpec
 from jestimator.amos import Shape, ParamsFn, ScaleByAmosState  # pylint: disable=g-multiple-import
 import numpy
 
