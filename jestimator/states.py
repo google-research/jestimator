@@ -390,21 +390,25 @@ class Predictor(object):
       post_str: If not None, a string to print after all results.
     """
     self._proc_fn = proc_fn
-    self._out_file = None
-    if output_path is not None:
-      logging.info('Writing predictions to %s', output_path)
-      gfile.makedirs(os.path.dirname(output_path))
-      self._out_file = gfile.GFile(output_path, 'w')
-    if pre_str is not None:
-      print(pre_str, file=self._out_file)
-    self._post_str = post_str
+    if jax.process_index() == 0:
+      self._out_file = None
+      if output_path is not None:
+        logging.info('Writing predictions to %s', output_path)
+        gfile.makedirs(os.path.dirname(output_path))
+        self._out_file = gfile.GFile(output_path, 'w')
+      if pre_str is not None:
+        print(pre_str, file=self._out_file)
+      self._post_str = post_str
 
   def consume(self, infer):
-    for x in self._proc_fn(infer):
-      print(x, file=self._out_file)
+    result = self._proc_fn(infer)
+    if jax.process_index() == 0:
+      for x in result:
+        print(x, file=self._out_file)
 
   def complete(self):
-    if self._post_str is not None:
-      print(self._post_str, file=self._out_file)
-    if self._out_file is not None:
-      self._out_file.close()
+    if jax.process_index() == 0:
+      if self._post_str is not None:
+        print(self._post_str, file=self._out_file)
+      if self._out_file is not None:
+        self._out_file.close()

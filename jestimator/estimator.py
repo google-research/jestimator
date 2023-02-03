@@ -337,15 +337,12 @@ def pred_data(config, partitioner):
   return data_utils.DataIterable(pred_ds, partitioner), steps, last_size
 
 
-def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config):
+def get_eval_fn(eval_ds, eval_steps, last_size, infer_fn, evaluator):
   """Get a function to evaluate model state on a data set."""
-  if jax.process_index() == 0:
-    evaluator = module.get_evaluator(config)
 
   def evaluate_fn(state):
     """Evaluate `state` on a data set."""
-    if jax.process_index() == 0:
-      evaluator.reset_states()
+    evaluator.reset_states()
     eval_iter = iter(eval_ds)
     for i in range(eval_steps):
       gold, batch = next(eval_iter)
@@ -358,21 +355,20 @@ def get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn, module, config):
         gold, infer = process_allgather((gold, infer), tiled=True)
         if i == eval_steps - 1:  # Last batch.
           gold, infer = jax.tree_map(lambda v: v[:last_size], (gold, infer))
-        if jax.process_index() == 0:
-          evaluator.update_state(gold, infer)
+        evaluator.update_state(gold, infer)
     next(eval_iter, None)
 
+    eval_metrics = evaluator.result()
     if jax.process_index() == 0:
-      eval_metrics = evaluator.result()
       for metric, score in eval_metrics.items():
         logging.info('%s: %f at step %d', metric, score,
                      jax.device_get(state.step))
-      return eval_metrics
+    return state, eval_metrics
 
   return evaluate_fn
 
 
-def eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves):
+def eval_wait(ckpt_path, state, eval_fn, eval_dir, high_saves, low_saves):
   """Wait in a loop to evaluate new checkpoints."""
   last_eval_path = os.path.join(eval_dir, 'last_evaluated_ckpt')
   last_evaluated = checkpoint_utils.last_evaluated_ckpt(last_eval_path)
@@ -401,7 +397,7 @@ def eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves):
       continue
 
     step = jax.device_get(state.step)
-    eval_metrics = evaluate_fn(state)
+    state, eval_metrics = eval_fn(state)
     if jax.process_index() == 0:
       with tb_writer.as_default():
         for metric, score in eval_metrics.items():
@@ -444,10 +440,8 @@ def eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves):
       break
 
 
-def predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config):
+def predict(pred_ds, pred_steps, last_size, infer_fn, state, predictor):
   """Run prediction on a data set."""
-  if jax.process_index() == 0:
-    predictor = module.get_predictor(config)
   pred_iter = iter(pred_ds)
   for i in range(pred_steps):
     if FLAGS.dry_run:
@@ -460,12 +454,9 @@ def predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config):
       infer = process_allgather(infer, tiled=True)
       if i == pred_steps - 1:  # Last batch.
         infer = jax.tree_map(lambda v: v[:last_size], infer)
-      if jax.process_index() == 0:
-        predictor.consume(infer)
+      predictor.consume(infer)
   next(pred_iter, None)
-
-  if jax.process_index() == 0:
-    predictor.complete()
+  predictor.complete()
   logging.info('Prediction complete.')
 
 
@@ -504,10 +495,11 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
         logging.warning('The step is 0 (model may not be trained).')
 
   if mode.is_eval and FLAGS.eval_pattern is not None:
-    evaluate_fn = get_evaluate_fn(eval_ds, eval_steps, last_size, infer_fn,
-                                  module, config)
+    evaluator = module.get_evaluator(config)
+    eval_fn = get_eval_fn(eval_ds, eval_steps, last_size, infer_fn, evaluator)
     if mode == RunMode.EVAL_ONCE:
-      return evaluate_fn(state)
+      state, eval_metrics = eval_fn(state)
+      return eval_metrics
 
     elif mode == RunMode.EVAL_WAIT:
       eval_dir = os.path.join(FLAGS.model_dir, FLAGS.eval_label)
@@ -526,10 +518,11 @@ def eval_or_predict(ckpt_path, mode, module, config, partitioner):
             state, partitioner, save_dir, keep=FLAGS.max_save)
         low_saves.append((metric, ckpt_saver))
 
-      eval_wait(ckpt_path, state, evaluate_fn, eval_dir, high_saves, low_saves)
+      eval_wait(ckpt_path, state, eval_fn, eval_dir, high_saves, low_saves)
 
   elif mode == RunMode.PREDICT and FLAGS.pred_pattern is not None:
-    predict(pred_ds, pred_steps, last_size, infer_fn, state, module, config)
+    predictor = module.get_predictor(config)
+    predict(pred_ds, pred_steps, last_size, infer_fn, state, predictor)
 
 
 def get_random_seed():
