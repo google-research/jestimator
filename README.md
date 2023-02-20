@@ -332,13 +332,9 @@ At the same time, we can start a tensorboard to monitor the process:
 tensorboard --logdir $HOME/experiments/mnist/models
 ```
 
-## More JEstimator Models
+## LSTM on PTB
 
-Here are the recipes to run several models in JEstimator.
-
-### LSTM on PTB
-
-To train a single layer LSTM model on PTB:
+We can use the following command to train a single layer LSTM on PTB:
 
 ```
 PYTHONPATH=. python3 jestimator/estimator.py \
@@ -359,7 +355,7 @@ PYTHONPATH=. python3 jestimator/estimator.py \
   --module_config.opt_config.momentum=0.0
 ```
 
-To evaluate the model on validation set:
+and evaluate:
 
 ```
 PYTHONPATH=. python3 jestimator/estimator.py \
@@ -370,3 +366,12 @@ PYTHONPATH=. python3 jestimator/estimator.py \
   --model_dir="$HOME/models/ptb_lstm" \
   --eval_batch_size=1
 ```
+
+It is suitable for running on single-GPU machine.
+
+## More JEstimator Models
+
+Here are some simple guides to pre-train and fine-tune BERT-like models, using TPUs on Google Cloud Platform (GCP). One can start with a Web browser with zero setup, by connecting to a Virtual Machine via Google Cloud console, without installing anything locally. If this is the first time, one is covered by enough credits to try the commands by free.
+
+* [My experience of pre-training a BERT-base model on GCP](docs/gcp-pretrain.md)
+* [My experience of fine-tuning MNLI on GCP](docs/gcp-finetune.md)

@@ -24,6 +24,10 @@ To release a new version (e.g. from `1.0.0` -> `2.0.0`):
 ## [Unreleased]
 
 * Multi-pod debug for estimator.
+* Show variable shape in tensorboard.
+* `save_mutable` defaults to False for LSTM debug.
+* Debug for checkpointing.
+* Simplified pre-training code (remove seqio).
 
 ## [0.3.3] - 2022-12-01
 

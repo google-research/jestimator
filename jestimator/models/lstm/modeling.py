@@ -18,6 +18,7 @@ import math
 from typing import Optional, Tuple
 
 from flax import linen as nn
+from flax.linen.partitioning import variable_with_axes
 import jax
 import jax.numpy as jnp
 from jestimator.modeling import global_kwargs, sparse_xe_with_logits, normalize_loss_by_size, unstack, truncated_normal_initializer, Dropout  # pylint: disable=g-multiple-import
@@ -165,19 +166,35 @@ class SingleLstmLM(nn.Module):
     config = self.config
     embed_init = truncated_normal_initializer(math.sqrt(1 / config.hidden_size))
     self.embed = nn.Embed(
-        config.vocab_size, config.hidden_size, embedding_init=embed_init)
+        config.vocab_size, config.hidden_size, embedding_init=embed_init
+    )
     self.lstm = LstmLayer(config)
     self.bias = self.param('bias', nn.zeros, config.vocab_size)
 
     # Variables to keep context from previous batch.
-    self.ctx_prev = self.variable('context', 'prev', jnp.full, self.batch_size,
-                                  config.start_token_id)
-    self.ctx_recur = self.variable('context', 'recur', jnp.zeros,
-                                   (self.batch_size, config.hidden_size))
-    self.ctx_memory = self.variable('context', 'memory', jnp.zeros,
-                                    (self.batch_size, config.memory_size))
+    self.ctx_prev = variable_with_axes(
+        'context',
+        'prev',
+        jnp.full,
+        (self.batch_size,),
+        config.start_token_id,
+        axes=('data',),
+    )
+    self.ctx_recur = variable_with_axes(
+        'context',
+        'recur',
+        jnp.zeros,
+        (self.batch_size, config.hidden_size),
+        axes=('data', 'model'),
+    )
+    self.ctx_memory = variable_with_axes(
+        'context',
+        'memory',
+        jnp.zeros,
+        (self.batch_size, config.memory_size),
+        axes=('data', 'model'),
+    )
 
-  @nn.compact
   @global_kwargs(pass_down=True)
   def __call__(self,
                y: Array,

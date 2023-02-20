@@ -12,7 +12,63 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Sequence classification."""
+r"""Sequence classification.
+
+# For debug run locally:
+
+## Train:
+
+```
+PYTHONPATH=. python3 \
+jestimator/estimator.py \
+  --module_imp="jestimator.models.rope.finetune" \
+  --module_config="jestimator/models/rope/finetune.py" \
+  --module_config.vocab_path="$HOME/data/sentence_piece/sp.model" \
+  --module_config.segment_names="sentence1,sentence2" \
+  --module_config.model_config.num_labels=2 \
+  --train_pattern="tfds://glue/rte/split=train" \
+  --valid_pattern="tfds://glue/rte/split=validation" \
+  --model_dir="$HOME/models/rope_rte" \
+  --checkpoint_path="gs://gresearch/checkpoints_in_amos_paper/\
+adamw/rope-base/checkpoint_300000" \
+  --train_batch_size=4 --valid_batch_size=4 --num_valid_examples=4 \
+  --check_every_steps=10 --logtostderr
+```
+
+## Eval:
+
+```
+PYTHONPATH=. python3 \
+jestimator/estimator.py \
+  --module_imp="jestimator.models.rope.finetune" \
+  --module_config="jestimator/models/rope/finetune.py" \
+  --module_config.vocab_path="$HOME/data/sentence_piece/sp.model" \
+  --module_config.segment_names="sentence1,sentence2" \
+  --module_config.model_config.num_labels=2 \
+  --module_config.eval_metric="accuracy" \
+  --eval_pattern="tfds://glue/rte/split=validation" \
+  --model_dir="$HOME/models/rope_rte" \
+  --eval_batch_size=4 --num_eval_examples=4 \
+  --logtostderr
+```
+
+## Predict:
+
+```
+PYTHONPATH=. python3 \
+jestimator/estimator.py \
+  --module_imp="jestimator.models.rope.finetune" \
+  --module_config="jestimator/models/rope/finetune.py" \
+  --module_config.vocab_path="$HOME/data/sentence_piece/sp.model" \
+  --module_config.segment_names="sentence1,sentence2" \
+  --module_config.model_config.num_labels=2 \
+  --module_config.label_names="entailment,not_entailment" \
+  --pred_pattern="tfds://glue/rte/split=test" \
+  --model_dir="$HOME/models/rope_rte" \
+  --pred_batch_size=4 --num_pred_examples=4 \
+  --logtostderr
+```
+"""
 
 import dataclasses
 

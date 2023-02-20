@@ -179,15 +179,17 @@ def valid_data(config, partitioner):
   valid_filenames = data_utils.get_dataset_filenames(FLAGS.valid_pattern)
   valid_d = config.valid_data_fn(
       valid_filenames, num_take=FLAGS.num_valid_examples)
-  valid_steps, _ = data_utils.count_dataset(valid_d, FLAGS.valid_batch_size)
+  steps, last_size = data_utils.count_dataset(valid_d, FLAGS.valid_batch_size)
+  if last_size < FLAGS.valid_batch_size:
+    steps -= 1  # Drop remainder
   valid_ds = data_utils.create_data_pipeline(
       valid_filenames,
       config.valid_data_fn,
       partitioner.get_data_layout(FLAGS.valid_batch_size),
       num_take=FLAGS.num_valid_examples)
-  logging.info('valid_steps: %d', valid_steps)
+  logging.info('valid_steps: %d', steps)
   logging.info('valid_data: %s', valid_ds.element_spec)
-  return data_utils.DataIterable(valid_ds, partitioner), valid_steps
+  return data_utils.DataIterable(valid_ds, partitioner), steps
 
 
 def calc_params_scale(params):
@@ -295,8 +297,10 @@ def train(ckpt_path, same_dir, rng, module, config, partitioner):
     params_scale = calc_params_scale_fn(state.params)
     if jax.process_index() == 0:
       with tb_writer.as_default():
+        flat_params = flatten_dict(state.params, sep='/')
         for k, v in flatten_dict(params_scale, sep='/').items():
-          tf.summary.scalar(f'params/{k}', jax.device_get(v), step=step)
+          shape = flat_params[k].shape
+          tf.summary.scalar(f'params/{k} {shape}', jax.device_get(v), step=step)
         for k, v in state.metrics_mod.apply(metrics).items():
           logging.info('%s at step %d: %f', k, step, v)
           tf.summary.scalar(f'train/{k}', v, step=step)

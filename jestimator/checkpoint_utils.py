@@ -44,11 +44,14 @@ def partial_restore(state,
       flat_ret[k] = u
     else:
       logging.warning('Shape %s != in ckpt %s', v.shape, u.shape)
-      assert u.shape[1:] == v.shape[1:]
-      if u.shape[0] < v.shape[0]:
-        flat_ret[k] = v.at[:u.shape[0]].set(u)
+      if u.shape[1:] == v.shape[1:]:
+        if u.shape[0] < v.shape[0]:
+          flat_ret[k] = v.at[:u.shape[0]].set(u)
+        else:
+          flat_ret[k] = u[:v.shape[0]]
       else:
-        flat_ret[k] = u[:v.shape[0]]
+        logging.warning('Ignored checkpoint due to shape discrepancy.')
+        flat_ret[k] = v
 
   params = freeze(unflatten_dict(flat_ret))
   state = state.replace(params=params)
@@ -80,7 +83,10 @@ def latest_ckpt_path(model_dir: Optional[str] = None,
     same_dir: Whether the checkpoint is in the same `model_dir`.
   """
   if model_dir is not None:
-    model_dir = os.path.abspath(model_dir) + os.sep
+    if model_dir.startswith('gs://'):
+      model_dir = model_dir.rstrip('/') + '/'
+    else:
+      model_dir = os.path.abspath(model_dir) + os.sep
     if init_ckpt_path is not None:
       ckpt_dir = os.path.abspath(os.path.dirname(init_ckpt_path)) + os.sep
       if ckpt_dir.startswith(model_dir):

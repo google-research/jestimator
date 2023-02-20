@@ -102,7 +102,7 @@ def load_config(global_flags):
   else:
     batch_size = global_flags.pred_batch_size
   config.mode = mode
-  config.local_batch_size = batch_size // jax.process_count()
+  config.batch_size = batch_size
 
   # Read vocab file.
   count = 0
@@ -155,7 +155,7 @@ def load_config(global_flags):
 def get_train_state(config, rng) -> TrainState:
   """Create train state."""
   model_config = modeling.ModelConfig(**config.model_config.to_dict())
-  model = modeling.SingleLstmLM(model_config, config.local_batch_size)
+  model = modeling.SingleLstmLM(model_config, config.batch_size)
 
   opt_config = config.opt_config
   if opt_config.optimizer == 'adam':
@@ -179,7 +179,7 @@ def get_train_state(config, rng) -> TrainState:
         clip_value=1.)
 
   metrics_mod = MeanMetrics.create('train_loss')
-  dummy = jnp.zeros((config.local_batch_size, config.seq_length), jnp.int32)
+  dummy = jnp.zeros((config.batch_size, config.seq_length), jnp.int32)
   return TrainState.create(metrics_mod, optimizer, model, rng, dummy, False)
 
 
@@ -205,8 +205,8 @@ def train_step(config, train_batch, state: TrainState, metrics):
 def get_infer_state(config):
   """Create infer state."""
   model_config = modeling.ModelConfig(**config.model_config.to_dict())
-  model = modeling.SingleLstmLM(model_config, config.local_batch_size)
-  dummy = jnp.zeros((config.local_batch_size, config.seq_length), jnp.int32)
+  model = modeling.SingleLstmLM(model_config, config.batch_size)
+  dummy = jnp.zeros((config.batch_size, config.seq_length), jnp.int32)
   return InferState.create(model, dummy, True, mode=config.mode)
 
 

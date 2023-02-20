@@ -80,6 +80,7 @@ class InferState(struct.PyTreeNode):
   _params_axes: FrozenDict[str, Any] = struct.field(pytree_node=False)
   _vars: FrozenDict[str, Any]
   _vars_axes: FrozenDict[str, Any] = struct.field(pytree_node=False)
+  save_mutable: bool = struct.field(pytree_node=False)
 
   def variables(self, params: Optional[FrozenDict[str, Any]] = None):
     if params is None:
@@ -90,7 +91,9 @@ class InferState(struct.PyTreeNode):
     return self._vars.keys()
 
   @classmethod
-  def create(cls, model: nn.Module, *init_args, **init_kwargs) -> 'InferState':
+  def create(
+      cls, model: nn.Module, *init_args, save_mutable=False, **init_kwargs
+  ) -> 'InferState':
     """Creates a new state with model initialized."""
     variables = model.init(jax.random.PRNGKey(0), *init_args, **init_kwargs)
     params, params_axes_, vars_, vars_axes_ = extract_axes(variables)
@@ -102,12 +105,13 @@ class InferState(struct.PyTreeNode):
         _params_axes=params_axes_,
         _vars=vars_,
         _vars_axes=vars_axes_,
+        save_mutable=save_mutable,
     )
 
   def state_dict(self) -> Mapping[str, Any]:
     """Returns a mutable representation of the state for checkpointing."""
     ret = {'target': unfreeze(self.params), 'state': {'step': self.step}}
-    if self.mutable():
+    if self.save_mutable:
       ret['flax_mutables'] = unfreeze(self._vars)
     return ret
 
@@ -150,6 +154,7 @@ class TrainState(struct.PyTreeNode):
   opt_state: optax.OptState
   metrics_mod: nn.Module = struct.field(pytree_node=False)
   _state_rng: PRNGKey = struct.field(pytree_node=False)
+  save_mutable: bool = struct.field(pytree_node=False)
 
   def variables(self, params: Optional[FrozenDict[str, Any]] = None):
     if params is None:
@@ -186,9 +191,16 @@ class TrainState(struct.PyTreeNode):
     return ret
 
   @classmethod
-  def create(cls, metrics_mod: nn.Module,
-             optimizer: optax.GradientTransformation, model: nn.Module,
-             rng: PRNGKey, *init_args, **init_kwargs) -> 'TrainState':
+  def create(
+      cls,
+      metrics_mod: nn.Module,
+      optimizer: optax.GradientTransformation,
+      model: nn.Module,
+      rng: PRNGKey,
+      *init_args,
+      save_mutable=False,
+      **init_kwargs,
+  ) -> 'TrainState':
     """Creates a new train state with model and optimizer initialized."""
     init_rng, state_rng = jax.random.split(rng)
     variables = model.init(init_rng, *init_args, **init_kwargs)
@@ -205,6 +217,7 @@ class TrainState(struct.PyTreeNode):
         opt_state=opt_state,
         metrics_mod=metrics_mod,
         _state_rng=state_rng,
+        save_mutable=save_mutable,
     )
 
   def apply_gradients(self, *, grads, **kwargs):
@@ -244,7 +257,7 @@ class TrainState(struct.PyTreeNode):
             'param_states': param_states,
         }
     }
-    if self.mutable():
+    if self.save_mutable:
       ret['flax_mutables'] = unfreeze(self._vars)
     return ret
 

@@ -12,23 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pretrain."""
+r"""Pretrain.
+
+# For debug run locally:
+
+```
+PYTHONPATH=. python3 \
+jestimator/estimator.py \
+  --module_imp="jestimator.models.bert.pretrain" \
+  --module_config="jestimator/models/bert/pretrain.py" \
+  --module_config.model_config.vocab_size=32000 \
+  --module_config.mask_token_id=4 \
+  --train_pattern="gs://gresearch/checkpoints_in_amos_paper/data/\
+books-00000-of-00500" \
+  --valid_pattern="gs://gresearch/checkpoints_in_amos_paper/data/ptb" \
+  --model_dir="$HOME/models/bert_pretrain" \
+  --train_batch_size=4 --valid_batch_size=4 --num_valid_examples=4 \
+  --check_every_steps=10 --logtostderr
+```
+"""
 
 import dataclasses
-import importlib
 from typing import Mapping
 
 import jax
 import jax.numpy as jnp
 from jestimator import amos
 from jestimator.data.pipeline_lm import lm_data
-from jestimator.data.pipeline_seqio import is_seqio, seqio_data  # pylint: disable=g-multiple-import
 from jestimator.models.bert import modeling
 from jestimator.states import TrainState, MeanMetrics  # pylint: disable=g-multiple-import
 import ml_collections
 from ml_collections.config_dict import config_dict
 import optax
-import seqio
 import tensorflow as tf
 
 
@@ -55,60 +70,7 @@ def get_config():
   # Other config.
   module_config.mask_token_id = config_dict.placeholder(int)
   module_config.mask_rate = 0.15
-  module_config.seqio_mixture_or_task_module = config_dict.placeholder(str)
-  module_config.seqio_pack = True
-  module_config.seqio_cached = False
   return module_config
-
-
-class PackOrPadConverter(seqio.FeatureConverter):
-  """A feature converter that only packs or pads features.
-
-  Example: a packed dataset.
-
-    ds = [{"targets": [3, 9, 1]}, {"targets": [4, 1]}]
-
-    input_lengths = {"targets": 6}
-
-    converted_ds = {
-          "targets": [3, 9, 1, 4, 1, 0],
-          "targets_positions": [0, 1, 2, 0, 1, 0],
-          "targets_segment_ids": [1, 1, 1, 2, 2, 0]
-    }
-  Note that two examples are packed together into one example.
-  """
-  TASK_FEATURES = {
-      'targets': seqio.FeatureConverter.FeatureSpec(dtype=tf.int32)
-  }
-  MODEL_FEATURES = {
-      'targets': seqio.FeatureConverter.FeatureSpec(dtype=tf.int32),
-      'input_mask': seqio.FeatureConverter.FeatureSpec(dtype=tf.bool)
-  }
-  PACKING_FEATURE_DTYPES = {}
-
-  def _convert_example(
-      self, features: Mapping[str, tf.Tensor]) -> Mapping[str, tf.Tensor]:
-    targets = features['targets']
-    input_mask = seqio.non_padding_position(targets, tf.bool)
-    d = {'targets': targets, 'input_mask': input_mask}
-    return d
-
-  def _convert_features(
-      self, ds: tf.data.Dataset,
-      task_feature_lengths: Mapping[str, int]) -> tf.data.Dataset:
-    """Convert the dataset to be fed to a language model."""
-    ds = self._pack_or_pad(ds, task_feature_lengths)
-    return ds.map(self._convert_example, num_parallel_calls=tf.data.AUTOTUNE)
-
-  def get_model_feature_lengths(
-      self, task_feature_lengths: Mapping[str, int]) -> Mapping[str, int]:
-    """Define the length relationship between task and model features."""
-    decoder_length = task_feature_lengths['targets']
-    model_feature_lengths = {
-        'targets': decoder_length,
-        'input_mask': decoder_length
-    }
-    return model_feature_lengths
 
 
 def load_config(global_flags):
@@ -122,31 +84,14 @@ def load_config(global_flags):
 
   # Construct data pipelines in the following (using TensorFLow):
   seq_length = config.model_config.max_length
-  if config.seqio_mixture_or_task_module is not None:
-    importlib.import_module(config.seqio_mixture_or_task_module)
 
   def feature_fn(token_ids: tf.Tensor) -> Mapping[str, tf.Tensor]:
     """Builds a feature dict to be compatible with seqio."""
     return {'targets': tf.ensure_shape(token_ids, (seq_length,))}
 
-  if is_seqio(global_flags.train_pattern):
-    train_data_fn = seqio_data({'targets': seq_length},
-                               PackOrPadConverter(pack=config.seqio_pack),
-                               use_cached=config.seqio_cached,
-                               shuffle=True)
-  else:
-    train_data_fn = lm_data(
-        seq_length, random_skip=True, feature_fn=feature_fn, interleave=True)
-
-  if is_seqio(global_flags.valid_pattern):
-    valid_data_fn = seqio_data({'targets': seq_length},
-                               PackOrPadConverter(pack=config.seqio_pack),
-                               use_cached=config.seqio_cached)
-  else:
-    valid_data_fn = lm_data(seq_length, feature_fn=feature_fn)
-
-  config.train_data_fn = train_data_fn
-  config.valid_data_fn = valid_data_fn
+  config.train_data_fn = lm_data(
+      seq_length, random_skip=True, feature_fn=feature_fn, interleave=True)
+  config.valid_data_fn = lm_data(seq_length, feature_fn=feature_fn)
   return config
 
 

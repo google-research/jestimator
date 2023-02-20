@@ -62,6 +62,10 @@ def evaluate(s: str, shape: Shape):
     if isinstance(node, ast.Constant):
       return node.value
 
+    if isinstance(node, ast.Name):
+      assert node.id == 'SHAPE'
+      return shape
+
     if isinstance(node, ast.Num):  # Python 3.7 compatibility
       return node.n
 
@@ -73,9 +77,7 @@ def evaluate(s: str, shape: Shape):
           _evaluate(node.lower), _evaluate(node.upper), _evaluate(node.step))
 
     if isinstance(node, ast.Subscript):
-      v = node.value
-      assert isinstance(v, ast.Name) and v.id == 'SHAPE'
-      return shape[_evaluate(node.slice)]
+      return _evaluate(node.value)[_evaluate(node.slice)]
 
     if isinstance(node, ast.Tuple):
       return tuple([_evaluate(x) for x in node.elts])
