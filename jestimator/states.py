@@ -181,7 +181,7 @@ class TrainState(struct.PyTreeNode):
       if has_aux and len(ret) >= 3:
         return ret[0], ret[1:]
       return ret
-
+  # pytype: disable=wrong-arg-types  # jax-ndarray
     return jax.value_and_grad(fn, has_aux=has_aux or mutable)
 
   def step_rng(self):

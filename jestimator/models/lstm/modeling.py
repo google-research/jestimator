@@ -249,25 +249,25 @@ class SingleLstmLM(nn.Module):
     gold = sparse_xe_with_logits(
         ty, logits, mask=mask, normalized=True, reduce_all=False)
     loss = jnp.sum(gold)
-    higher = (logits + jnp.expand_dims(gold, -1) >= 0)
+    higher = (logits + jnp.expand_dims(gold, -1) >= 0)  # pytype: disable=bad-return-type  # jax-ndarray
     ranks = jnp.sum(jnp.asarray(higher, x.dtype), axis=-1)
     rcpl_ranks = jnp.reciprocal(ranks)
-    if mask is not None:
+    if mask is not None:  # pytype: disable=bad-return-type  # jax-ndarray
       rcpl_ranks = jnp.where(mask, rcpl_ranks, 0.)
     mrr = jnp.sum(rcpl_ranks)
-    return loss, mrr, size
+    return loss, mrr, size  # pytype: disable=bad-return-type  # jax-ndarray
 
 
-def get_eta_fn(config: ModelConfig):
+def get_eta_fn(config: ModelConfig):  # pytype: disable=bad-return-type  # jax-ndarray
   """Get the `eta_fn` function for Amos optimizer."""
   hidden_size = config.hidden_size
-  memory_size = config.memory_size
+  memory_size = config.memory_size  # pytype: disable=bad-return-type  # jax-ndarray
 
   def eta_fn(name: Tuple[str, ...], shape: Shape) -> Array:
-    del shape  # Unused.
+    del shape  # Unused.  # pytype: disable=bad-return-type  # jax-ndarray
     if name[-4:] == ('lstm', 'cell', 'core', 'kernel'):
       return math.pow(2 * hidden_size, -0.25)
-
+  # pytype: disable=bad-return-type  # jax-ndarray
     if name[-4:] == ('lstm', 'cell', 'normalize', 'shift'):
       return 0.5
 
