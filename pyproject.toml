@@ -2,7 +2,7 @@
 name = "jestimator"
 description = "Implementation of the Amos optimizer from the JEstimator lib."
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 license = {file = "LICENSE"}
 authors = [{name = "jestimator authors", email="no-reply@google.com"}]
 classifiers = [
@@ -15,6 +15,7 @@ keywords = []
 
 # pip dependencies of the project
 dependencies = [
+    "jax>=0.4.3",
     "flax",
 ]
 
