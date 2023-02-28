@@ -266,25 +266,25 @@ def get_eta_fn(config: ModelConfig):
   def eta_fn(name: Tuple[str, ...], shape: Shape) -> Array:
     del shape  # Unused.
     if name[-4:] == ('lstm', 'cell', 'core', 'kernel'):
-      return math.pow(2 * hidden_size, -0.25)
+      return math.pow(2 * hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-4:] == ('lstm', 'cell', 'normalize', 'shift'):
-      return 0.5
+      return 0.5  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-4:] == ('lstm', 'cell', 'out', 'kernel'):
-      return math.pow(memory_size * hidden_size, -0.25)
+      return math.pow(memory_size * hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-4:] == ('lstm', 'cell', 'out', 'bias'):
-      return 0.5 * math.pow(hidden_size, -0.25)
+      return 0.5 * math.pow(hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-3:] == ('lstm', 'normalize', 'shift'):
-      return 0.5 * math.pow(hidden_size, -0.25)
+      return 0.5 * math.pow(hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-2:] == ('embed', 'embedding'):
-      return math.pow(hidden_size, -0.25)
+      return math.pow(hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-1] == 'bias':
-      return 0.5
+      return 0.5  # pytype: disable=bad-return-type  # jax-ndarray
 
   return eta_fn
 

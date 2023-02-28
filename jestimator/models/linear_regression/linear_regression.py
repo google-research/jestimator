@@ -148,7 +148,7 @@ class LinearRegression(nn.Module):
     num_hosts = jnp.asarray(jax.host_count(), loss.dtype)
     loss = jnp.sum(loss) * jax.lax.rsqrt(size * num_hosts)
     size = jnp.sqrt(size / num_hosts)
-    return loss, size
+    return loss, size  # pytype: disable=bad-return-type  # jax-ndarray
 
 
 def get_train_state(config, rng):

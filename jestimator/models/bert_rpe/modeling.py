@@ -117,7 +117,7 @@ class EncoderBlock(nn.Module):
         all_hidden += (x,)
 
     if return_all_hidden:
-      return all_hidden
+      return all_hidden  # pytype: disable=bad-return-type  # jax-ndarray
     return x
 
 
@@ -144,7 +144,7 @@ class AttentionBlock(nn.Module):
   def setup(self):
     config = self.config
     self.attention_layer = AttentionLayer(config)
-    self.attention_out = DenseGeneral(
+    self.attention_out = DenseGeneral(  # pytype: disable=wrong-arg-types  # jax-ndarray
         features=config.hidden_size,
         use_bias=True,
         axis=(-2, -1),
@@ -187,7 +187,7 @@ class AttentionLayer(nn.Module):
         use_bias=True,
         kernel_init=nn.zeros,
         kernel_axis_names=('embed', 'heads', 'kv'))
-    self.key = DenseGeneral(
+    self.key = DenseGeneral(  # pytype: disable=wrong-arg-types  # jax-ndarray
         features=(num_heads, head_size),
         use_bias=True,
         kernel_init=truncated_normal_initializer(config.initializer_range),
@@ -277,7 +277,7 @@ class MlpBlock(nn.Module):
 
   def setup(self):
     config = self.config
-    self.dense1 = DenseGeneral(
+    self.dense1 = DenseGeneral(  # pytype: disable=wrong-arg-types  # jax-ndarray
         features=config.mlp_size,
         use_bias=True,
         kernel_init=truncated_normal_initializer(config.initializer_range),
@@ -305,12 +305,12 @@ class EmbedderBlock(nn.Module):
 
   def setup(self):
     config = self.config
-    self.token_embed = Embed(
+    self.token_embed = Embed(  # pytype: disable=wrong-arg-types  # jax-ndarray
         num_embeddings=config.vocab_size,
         features=config.hidden_size,
         embedding_init=truncated_normal_initializer(config.initializer_range),
         axes=('vocab', 'embed'))
-    self.segment_embed = Embed(
+    self.segment_embed = Embed(  # pytype: disable=wrong-arg-types  # jax-ndarray
         num_embeddings=config.num_segments,
         features=config.hidden_size,
         embedding_init=truncated_normal_initializer(config.initializer_range),
@@ -450,14 +450,14 @@ class ModelForSeqCls(nn.Module):
   def xe_loss(self, labels: Array, input_ids: Array) -> Array:
     logits = self(input_ids)
     loss = sparse_xe_with_logits(labels, logits)
-    return normalize_loss_by_size(loss, labels.size)
+    return normalize_loss_by_size(loss, labels.size)  # pytype: disable=wrong-arg-types  # jax-ndarray
 
   @global_kwargs(pass_down=True)
   def mse_loss(self, labels: Array, input_ids: Array) -> Array:
     logits = self(input_ids)
     scores = jax.nn.softmax(logits)[..., 0]
     loss = jnp.sum(jnp.square(scores - labels))
-    return normalize_loss_by_size(loss, labels.size)
+    return normalize_loss_by_size(loss, labels.size)  # pytype: disable=wrong-arg-types  # jax-ndarray
 
 
 def to_attention_mask(input_mask: Array) -> Array:
@@ -491,21 +491,21 @@ def get_eta_fn(config: ModelConfig):
   def eta_fn(name: Tuple[str, ...], shape: Shape) -> Array:
     del shape  # Unused.
     if name[-2:] == ('layer_norm', 'scale'):
-      return 1.0
+      return 1.0  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-1] == 'bias':
-      return 0.5
+      return 0.5  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-1] == 'relpos_embed':
-      return 0.5
+      return 0.5  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-1] == 'embedding':
-      return math.sqrt(2 / hidden_size)
+      return math.sqrt(2 / hidden_size)  # pytype: disable=bad-return-type  # jax-ndarray
 
     if name[-3:] == ('mlp_block', 'dense2', 'kernel'):
-      return math.sqrt(2 / mlp_size)
+      return math.sqrt(2 / mlp_size)  # pytype: disable=bad-return-type  # jax-ndarray
 
-    return math.sqrt(1 / hidden_size)
+    return math.sqrt(1 / hidden_size)  # pytype: disable=bad-return-type  # jax-ndarray
 
   return eta_fn
 

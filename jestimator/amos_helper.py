@@ -143,7 +143,7 @@ def maybe_reduce_axis_names(var, axes):
 
 def state_partition_rule(state: ScaleByAmosState, params_axes):
   """Creates partition for Amos states from partition of parameters."""
-  return ScaleByAmosState(
+  return ScaleByAmosState(  # pytype: disable=wrong-arg-types  # jax-ndarray
       count=None,
       v=jax.tree_map(maybe_reduce_axis_names, state.v, params_axes),
       b=jax.tree_map(maybe_reduce_axis_names, state.b, params_axes))

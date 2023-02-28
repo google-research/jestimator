@@ -83,7 +83,7 @@ mnli/models" \
 
 ## Start TensorBoard
 
-The setup is the same as in [pre-training](gcp-pretrain.md#start-tensorboard). We use
+The setup is the same as in [pre-training](gcp-pretrain.md#tensorboard). We use
 the following command to start a TensorBoard.
 
 ```

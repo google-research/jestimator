@@ -186,7 +186,7 @@ class TrainState(struct.PyTreeNode):
 
   def step_rng(self):
     """Returns a PRNGKey with the current step folded in."""
-    ret = jax.random.fold_in(self._state_rng, self.step)
+    ret = jax.random.fold_in(self._state_rng, self.step)  # pytype: disable=wrong-arg-types  # jax-ndarray
     ret = jax.random.fold_in(ret, jax.process_index())
     return ret
 
