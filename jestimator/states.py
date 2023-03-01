@@ -26,13 +26,14 @@ from flax.serialization import from_state_dict, to_state_dict  # pylint: disable
 from flax.traverse_util import empty_node, flatten_dict, unflatten_dict  # pylint: disable=g-multiple-import
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 from jestimator import amos_helper
 from jestimator.amos import ScaleByAmosState
 import optax
 from t5x.utils import get_local_data
 from tensorflow.io import gfile
 
-from flaxformer.types import Array, PRNGKey  # pylint: disable=g-multiple-import
+PRNGKey = jax.random.KeyArray
 
 
 def extract_axes(variables: FrozenDict[str, Any]):
@@ -73,7 +74,7 @@ def extract_axes(variables: FrozenDict[str, Any]):
 
 class InferState(struct.PyTreeNode):
   """State for inference, with support for partitioning."""
-  step: Array
+  step: ArrayLike
   apply_fn: Callable = struct.field(pytree_node=False)  # pylint: disable=g-bare-generic
   ret: Any
   params: FrozenDict[str, Any]
@@ -144,7 +145,7 @@ class TrainState(struct.PyTreeNode):
     tx: An Optax gradient transformation.
     opt_state: The state for `tx`.
   """
-  step: Array
+  step: ArrayLike
   apply_fn: Callable = struct.field(pytree_node=False)  # pylint: disable=g-bare-generic
   params: FrozenDict[str, Any]
   _params_axes: FrozenDict[str, Any] = struct.field(pytree_node=False)
@@ -186,7 +187,7 @@ class TrainState(struct.PyTreeNode):
 
   def step_rng(self):
     """Returns a PRNGKey with the current step folded in."""
-    ret = jax.random.fold_in(self._state_rng, self.step)  # pytype: disable=wrong-arg-types  # jax-ndarray
+    ret = jax.random.fold_in(self._state_rng, self.step)
     ret = jax.random.fold_in(ret, jax.process_index())
     return ret
 

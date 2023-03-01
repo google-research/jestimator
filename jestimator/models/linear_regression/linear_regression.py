@@ -65,6 +65,7 @@ linear_regression.py" \
 from flax import linen as nn
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 from jestimator.states import Evaluator, InferState, MeanMetrics, Predictor, TrainState  # pylint: disable=g-multiple-import
 import ml_collections
 import optax
@@ -72,7 +73,6 @@ from sklearn.metrics import mean_squared_error
 import tensorflow as tf
 
 from flaxformer.components.dense import DenseGeneral
-from flaxformer.types import Array
 
 
 def get_config():
@@ -132,7 +132,7 @@ class LinearRegression(nn.Module):
   y_dim: int
 
   @nn.compact
-  def __call__(self, x: Array) -> Array:
+  def __call__(self, x: ArrayLike) -> ArrayLike:
     """Applies linear on the input."""
     linear = DenseGeneral(
         features=self.y_dim,
@@ -141,14 +141,14 @@ class LinearRegression(nn.Module):
         kernel_axis_names=('x', 'y'))
     return linear(x)
 
-  def mse(self, x: Array, y: Array) -> Array:
+  def mse(self, x: ArrayLike, y: ArrayLike) -> ArrayLike:
     """Mean squared error."""
     loss = jnp.mean(jnp.square(self(x) - y), axis=-1)
     size = jnp.asarray(loss.size, loss.dtype)
     num_hosts = jnp.asarray(jax.host_count(), loss.dtype)
     loss = jnp.sum(loss) * jax.lax.rsqrt(size * num_hosts)
     size = jnp.sqrt(size / num_hosts)
-    return loss, size  # pytype: disable=bad-return-type  # jax-ndarray
+    return loss, size
 
 
 def get_train_state(config, rng):

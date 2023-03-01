@@ -29,9 +29,9 @@ from flax.serialization import from_state_dict, to_state_dict  # pylint: disable
 from flax.traverse_util import empty_node, flatten_dict, unflatten_dict  # pylint: disable=g-multiple-import
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 import optax
 
-Array = jnp.ndarray
 Shape = Tuple[int, ...]
 ScalarOrSchedule = Union[float, optax.Schedule]
 ParamsFn = Callable[[Tuple[str, ...], Shape], Any]
@@ -39,7 +39,7 @@ ParamsFn = Callable[[Tuple[str, ...], Shape], Any]
 
 class ScaleByAmosState(NamedTuple):
   """State for the Amos algorithm."""
-  count: Array  # shape=(), dtype=jnp.int32.
+  count: Optional[ArrayLike]  # shape=(), dtype=jnp.int32.
   v: optax.Updates
   b: optax.Updates
 

@@ -21,12 +21,13 @@ from flax import linen as nn
 import jax
 import jax.numpy as jnp
 
-from flaxformer.types import Array, DType, Initializer, PRNGKey, Shape  # pylint: disable=g-multiple-import
+from jax.typing import ArrayLike
+from flaxformer.types import DType, Initializer, PRNGKey, Shape  # pylint: disable=g-multiple-import
 
 
-def sparse_xe_with_logits(labels: Array,
-                          logits: Array,
-                          mask: Optional[Array] = None,
+def sparse_xe_with_logits(labels: ArrayLike,
+                          logits: ArrayLike,
+                          mask: Optional[ArrayLike] = None,
                           normalized: bool = False,
                           reduce_all: bool = True):
   """Sparse cross entropy from softmax logits.
@@ -58,7 +59,9 @@ def sparse_xe_with_logits(labels: Array,
   return loss
 
 
-def normalize_loss_by_size(loss: Array, size: Array) -> Tuple[Array, Array]:
+def normalize_loss_by_size(
+    loss: ArrayLike, size: ArrayLike
+) -> Tuple[ArrayLike, ArrayLike]:
   """Normalize a loss value by size of labels."""
   size = jnp.asarray(size, loss.dtype)
   num_hosts = jnp.asarray(jax.process_count(), loss.dtype)
@@ -151,10 +154,10 @@ def global_kwargs(*inherits: str, pass_down: bool = False):
   return wrap
 
 
-def truncated_normal_initializer(stddev):
+def truncated_normal_initializer(stddev: ArrayLike) -> Initializer:
   """Truncated normal initializer."""
 
-  def init(key: PRNGKey, shape: Shape, dtype: DType) -> Initializer:
+  def init(key: PRNGKey, shape: Shape, dtype: DType) -> ArrayLike:
     return jax.random.truncated_normal(
         key=key, lower=-2., upper=2., shape=shape, dtype=dtype) * stddev
 
@@ -166,7 +169,7 @@ class Dropout(nn.Module):
   rate: float
 
   @global_kwargs('enable_dropout')
-  def __call__(self, inputs: Array, enable_dropout: bool = False):
+  def __call__(self, inputs: ArrayLike, enable_dropout: bool = False):
     """Applies a random dropout mask to the input."""
     if not enable_dropout:
       return inputs

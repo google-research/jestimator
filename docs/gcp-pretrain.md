@@ -147,7 +147,7 @@ gcloud compute tpus tpu-vm ssh node-1 --zone us-central1-a --worker=all \
 **Caution**: One wants to check the billing information now because the
 pre-training job may quickly exhaust the credit!
 
-## [Start TensorBoard](#tensorboard)
+## Start TensorBoard
 
 After the pre-training job starts, we can start a TensorBoard to monitor the
 pre-training job. We will use

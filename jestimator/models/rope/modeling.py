@@ -21,12 +21,12 @@ from flax import linen as nn
 from flax.linen.partitioning import param_with_axes, with_sharding_constraint  # pylint: disable=g-multiple-import
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 from jestimator.modeling import global_kwargs, sparse_xe_with_logits, normalize_loss_by_size, truncated_normal_initializer, Dropout  # pylint: disable=g-multiple-import
 
 from flaxformer.components import embedding
 from flaxformer.components.dense import DenseGeneral
 from flaxformer.components.embedding import Embed
-from flaxformer.types import Array
 
 Shape = Tuple[int, ...]
 
@@ -64,9 +64,8 @@ class FullEncoder(nn.Module):
 
   @global_kwargs('input_mask', pass_down=True)
   def __call__(
-      self,
-      token_ids: Array,
-      input_mask: Optional[Array] = None) -> Union[Array, Tuple[Array]]:
+      self, token_ids: ArrayLike, input_mask: Optional[ArrayLike] = None
+  ) -> Union[ArrayLike, Tuple[ArrayLike]]:
     """Embeds the inputs and then encodes those representations.
 
     Args:
@@ -93,10 +92,12 @@ class EncoderBlock(nn.Module):
     self.layers = [EncoderLayer(config) for i in range(config.num_layers)]
 
   @global_kwargs('attention_targets', 'return_all_hidden', pass_down=True)
-  def __call__(self,
-               x: Array,
-               attention_targets: Optional[Sequence[Array]] = None,
-               return_all_hidden: bool = False) -> Union[Array, Tuple[Array]]:
+  def __call__(
+      self,
+      x: ArrayLike,
+      attention_targets: Optional[Sequence[ArrayLike]] = None,
+      return_all_hidden: bool = False,
+  ) -> Union[ArrayLike, Tuple[ArrayLike]]:
     """Encodes sequence of hidden vectors.
 
     Args:
@@ -120,7 +121,7 @@ class EncoderBlock(nn.Module):
         all_hidden += (x,)
 
     if return_all_hidden:
-      return all_hidden  # pytype: disable=bad-return-type  # jax-ndarray
+      return all_hidden
     return x
 
 
@@ -134,7 +135,7 @@ class EncoderLayer(nn.Module):
     self.mlp_block = MlpBlock(config)
 
   @global_kwargs(pass_down=True)
-  def __call__(self, x: Array) -> Array:
+  def __call__(self, x: ArrayLike) -> ArrayLike:
     x = self.attention_block(x)
     x = self.mlp_block(x)
     return x
@@ -147,7 +148,7 @@ class AttentionBlock(nn.Module):
   def setup(self):
     config = self.config
     self.attention_layer = AttentionLayer(config)
-    self.attention_out = DenseGeneral(  # pytype: disable=wrong-arg-types  # jax-ndarray
+    self.attention_out = DenseGeneral(
         features=config.hidden_size,
         use_bias=True,
         axis=(-2, -1),
@@ -156,7 +157,7 @@ class AttentionBlock(nn.Module):
     self.dropout = Dropout(rate=config.hidden_dropout_rate)
     self.layer_norm = LayerNorm(epsilon=config.layer_norm_eps)
 
-  def __call__(self, x: Array) -> Array:
+  def __call__(self, x: ArrayLike) -> ArrayLike:
     y = self.attention_out(self.attention_layer(x))
     y = self.dropout(y)
     return self.layer_norm(x + y)
@@ -182,27 +183,32 @@ class AttentionLayer(nn.Module):
         features=(num_heads, head_size),
         use_bias=True,
         kernel_init=nn.zeros,
-        kernel_axis_names=('embed', 'heads', 'kv'))
-    self.key = DenseGeneral(  # pytype: disable=wrong-arg-types  # jax-ndarray
+        kernel_axis_names=('embed', 'heads', 'kv'),
+    )
+    self.key = DenseGeneral(
         features=(num_heads, head_size),
         use_bias=True,
         kernel_init=truncated_normal_initializer(config.initializer_range),
-        kernel_axis_names=('embed', 'heads', 'kv'))
+        kernel_axis_names=('embed', 'heads', 'kv'),
+    )
     self.value = DenseGeneral(
         features=(num_heads, head_size),
         use_bias=True,
         kernel_init=nn.zeros,
-        kernel_axis_names=('embed', 'heads', 'kv'))
+        kernel_axis_names=('embed', 'heads', 'kv'),
+    )
     self.dropout = Dropout(rate=config.attention_dropout_rate)
 
   @global_kwargs('attention_target', 'attention_mask', 'rotaries')
-  def __call__(self,
-               x: Array,
-               attention_target: Optional[Array] = None,
-               attention_mask: Optional[Array] = None,
-               rotaries: Optional[Tuple[Array, Array]] = None) -> Array:
+  def __call__(
+      self,
+      x: ArrayLike,
+      attention_target: Optional[ArrayLike] = None,
+      attention_mask: Optional[ArrayLike] = None,
+      rotaries: Optional[Tuple[ArrayLike, ArrayLike]] = None,
+  ) -> ArrayLike:
     query = self.query(x)
-    use_rotary = (attention_target is None)
+    use_rotary = attention_target is None
     if attention_target is None:
       attention_target = x
     key = self.key(attention_target)
@@ -236,7 +242,7 @@ class MlpBlock(nn.Module):
 
   def setup(self):
     config = self.config
-    self.dense1 = DenseGeneral(  # pytype: disable=wrong-arg-types  # jax-ndarray
+    self.dense1 = DenseGeneral(
         features=config.mlp_size,
         use_bias=True,
         kernel_init=truncated_normal_initializer(config.initializer_range),
@@ -250,7 +256,7 @@ class MlpBlock(nn.Module):
     self.dropout = Dropout(rate=config.hidden_dropout_rate)
     self.layer_norm = LayerNorm(epsilon=config.layer_norm_eps)
 
-  def __call__(self, x: Array) -> Array:
+  def __call__(self, x: ArrayLike) -> ArrayLike:
     y = self.activation(self.dense1(x))
     y = with_sharding_constraint(y, ('batch', 'qlen', 'mlp'))
     y = self.dense2(y)
@@ -264,12 +270,12 @@ class EmbedderBlock(nn.Module):
 
   def setup(self):
     config = self.config
-    self.token_embed = Embed(  # pytype: disable=wrong-arg-types  # jax-ndarray
+    self.token_embed = Embed(
         num_embeddings=config.vocab_size,
         features=config.hidden_size,
         embedding_init=truncated_normal_initializer(config.initializer_range),
         axes=('vocab', 'embed'))
-    self.segment_embed = Embed(  # pytype: disable=wrong-arg-types  # jax-ndarray
+    self.segment_embed = Embed(
         num_embeddings=config.num_segments,
         features=config.hidden_size,
         embedding_init=truncated_normal_initializer(config.initializer_range),
@@ -279,8 +285,8 @@ class EmbedderBlock(nn.Module):
 
   @global_kwargs('segment_ids')
   def __call__(self,
-               token_ids: Array,
-               segment_ids: Optional[Array] = None) -> Array:
+               token_ids: ArrayLike,
+               segment_ids: Optional[ArrayLike] = None) -> ArrayLike:
     """Embeds the input.
 
     Args:
@@ -319,7 +325,7 @@ class MLMHead(nn.Module):
     self.bias = param_with_axes(
         'bias', nn.zeros, (config.vocab_size,), jnp.float32, axes=('vocab',))
 
-  def __call__(self, x: Array) -> Array:
+  def __call__(self, x: ArrayLike) -> ArrayLike:
     x = self.layer_norm(self.activation(self.dense(x)))
     return self.token_embed.attend(x) + self.bias
 
@@ -334,18 +340,20 @@ class ModelForPretrain(nn.Module):
     self.mlm_head = MLMHead(config, self.encoder.embedder_block.token_embed)
 
   @global_kwargs(pass_down=True)
-  def __call__(self, input_ids: Array) -> Array:
+  def __call__(self, input_ids: ArrayLike) -> ArrayLike:
     x = self.encoder(input_ids)
     logits = self.mlm_head(x)
     return logits
 
   @global_kwargs('input_mask', pass_down=True)
-  def masked_logits(self,
-                    token_ids: Array,
-                    mask_token_id: int,
-                    mask_rate: float = 0.15,
-                    input_mask: Optional[Array] = None) -> Tuple[Array, Array]:
-    mask = jax.lax.rng_uniform(0., 1., token_ids.shape) < mask_rate
+  def masked_logits(
+      self,
+      token_ids: ArrayLike,
+      mask_token_id: int,
+      mask_rate: float = 0.15,
+      input_mask: Optional[ArrayLike] = None,
+  ) -> Tuple[ArrayLike, ArrayLike]:
+    mask = jax.lax.rng_uniform(0.0, 1.0, token_ids.shape) < mask_rate
     if input_mask is not None:
       mask = jnp.logical_and(mask, jnp.asarray(input_mask, bool))
     input_ids = jnp.where(mask, mask_token_id, token_ids)
@@ -354,7 +362,7 @@ class ModelForPretrain(nn.Module):
 
   @global_kwargs(pass_down=True)
   def mlm_train_loss(self,
-                     token_ids: Array,
+                     token_ids: ArrayLike,
                      mask_token_id: int,
                      mask_rate: float = 0.15):
     logits, mask = self.masked_logits(token_ids, mask_token_id, mask_rate)
@@ -363,7 +371,7 @@ class ModelForPretrain(nn.Module):
 
   @global_kwargs(pass_down=True)
   def mlm_valid_metrics(self,
-                        token_ids: Array,
+                        token_ids: ArrayLike,
                         mask_token_id: int,
                         mask_rate: float = 0.15):
     logits, mask = self.masked_logits(token_ids, mask_token_id, mask_rate)
@@ -397,7 +405,7 @@ class ModelForSeqCls(nn.Module):
         axes=('reduced_batch', 'qlen', 'embed'))
 
   @global_kwargs(pass_down=True)
-  def __call__(self, input_ids: Array) -> Array:
+  def __call__(self, input_ids: ArrayLike) -> ArrayLike:
     all_hidden = self.encoder(input_ids, return_all_hidden=True)
     cls_out = self.encoder.encoder_block(self.cls, attention_targets=all_hidden)
 
@@ -406,20 +414,20 @@ class ModelForSeqCls(nn.Module):
     return logits
 
   @global_kwargs(pass_down=True)
-  def xe_loss(self, labels: Array, input_ids: Array) -> Array:
+  def xe_loss(self, labels: ArrayLike, input_ids: ArrayLike) -> ArrayLike:
     logits = self(input_ids)
     loss = sparse_xe_with_logits(labels, logits)
-    return normalize_loss_by_size(loss, labels.size)  # pytype: disable=wrong-arg-types  # jax-ndarray
+    return normalize_loss_by_size(loss, labels.size)
 
   @global_kwargs(pass_down=True)
-  def mse_loss(self, labels: Array, input_ids: Array) -> Array:
+  def mse_loss(self, labels: ArrayLike, input_ids: ArrayLike) -> ArrayLike:
     logits = self(input_ids)
     scores = jax.nn.softmax(logits)[..., 0]
     loss = jnp.sum(jnp.square(scores - labels))
-    return normalize_loss_by_size(loss, labels.size)  # pytype: disable=wrong-arg-types  # jax-ndarray
+    return normalize_loss_by_size(loss, labels.size)
 
 
-def to_attention_mask(input_mask: Array) -> Array:
+def to_attention_mask(input_mask: ArrayLike) -> ArrayLike:
   log_mask = jnp.where(jnp.asarray(input_mask, bool), 0., float('-inf'))
   return log_mask[..., jnp.newaxis, jnp.newaxis, :]
 
@@ -429,7 +437,7 @@ class LayerNorm(nn.Module):
   epsilon: float = 1e-6
 
   @nn.compact
-  def __call__(self, x: Array) -> Array:
+  def __call__(self, x: ArrayLike) -> ArrayLike:
     """Applies layer normalization on the input."""
     hidden_size = x.shape[-1]
     x = x - jnp.mean(x, axis=-1, keepdims=True)
@@ -447,21 +455,21 @@ def get_eta_fn(config: ModelConfig):
   mlp_size = config.mlp_size
   hidden_size = config.hidden_size
 
-  def eta_fn(name: Tuple[str, ...], shape: Shape) -> Array:
+  def eta_fn(name: Tuple[str, ...], shape: Shape) -> ArrayLike:
     del shape  # Unused.
     if name[-2:] == ('layer_norm', 'scale'):
-      return 1.0  # pytype: disable=bad-return-type  # jax-ndarray
+      return 1.0
 
     if name[-1] == 'bias':
-      return 0.5  # pytype: disable=bad-return-type  # jax-ndarray
+      return 0.5
 
     if name[-1] == 'embedding':
-      return math.sqrt(2 / hidden_size)  # pytype: disable=bad-return-type  # jax-ndarray
+      return math.sqrt(2 / hidden_size)
 
     if name[-3:] == ('mlp_block', 'dense2', 'kernel'):
-      return math.sqrt(2 / mlp_size)  # pytype: disable=bad-return-type  # jax-ndarray
+      return math.sqrt(2 / mlp_size)
 
-    return math.sqrt(1 / hidden_size)  # pytype: disable=bad-return-type  # jax-ndarray
+    return math.sqrt(1 / hidden_size)
 
   return eta_fn
 

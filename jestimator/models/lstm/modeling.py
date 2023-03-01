@@ -21,10 +21,10 @@ from flax import linen as nn
 from flax.linen.partitioning import variable_with_axes
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 from jestimator.modeling import global_kwargs, sparse_xe_with_logits, normalize_loss_by_size, unstack, truncated_normal_initializer, Dropout  # pylint: disable=g-multiple-import
 
-from flaxformer.types import Array, DType  # pylint: disable=g-multiple-import
-
+DType = jnp.dtype
 Shape = Tuple[int, ...]
 
 
@@ -46,7 +46,7 @@ class ShiftNorm(nn.Module):
   """Shifted normalization."""
 
   @nn.compact
-  def __call__(self, x: Array) -> Array:
+  def __call__(self, x: ArrayLike) -> ArrayLike:
     shift = self.param('shift', nn.zeros, x.shape[-1], x.dtype)
     x = x - shift
     x = x - jnp.mean(x, axis=-1, keepdims=True)
@@ -72,9 +72,9 @@ class LstmCell(nn.Module):
         features=config.hidden_size, use_bias=True, kernel_init=nn.zeros)
 
   def __call__(self,
-               inputs: Array,
-               memory: Array,
-               memory_mask: Optional[Array] = None):
+               inputs: ArrayLike,
+               memory: ArrayLike,
+               memory_mask: Optional[ArrayLike] = None):
     """Call LSTM cell with some working modifications.
 
     Args:
@@ -111,9 +111,9 @@ class LstmLayer(nn.Module):
 
   @global_kwargs('enable_dropout')
   def __call__(self,
-               xs: Array,
+               xs: ArrayLike,
                seq_axis: int = -2,
-               init_carry: Optional[Tuple[Array, Array]] = None,
+               init_carry: Optional[Tuple[ArrayLike, ArrayLike]] = None,
                enable_dropout: bool = False):
     """Encode a sequence with LSTM.
 
@@ -134,7 +134,7 @@ class LstmLayer(nn.Module):
     if enable_dropout:
       memory_mask = self.memory_dropout(jnp.ones_like(init_carry[1]))
 
-    def body_fn(self, carry: Tuple[Array, Array], x: Array):
+    def body_fn(self, carry: Tuple[ArrayLike, ArrayLike], x: ArrayLike):
       recur, memory = carry
       inputs = jnp.concatenate((recur, x), -1)
       inputs = self.hidden_dropout(self.normalize(inputs))
@@ -197,10 +197,10 @@ class SingleLstmLM(nn.Module):
 
   @global_kwargs(pass_down=True)
   def __call__(self,
-               y: Array,
-               carry_mask: Array,
+               y: ArrayLike,
+               carry_mask: ArrayLike,
                mode: str = 'train',
-               length: Optional[Array] = None):
+               length: Optional[ArrayLike] = None):
     """Generation logits/loss for batch-major sequence `y`."""
     _, seq_length = y.shape
     ty = jnp.transpose(y)  # `ty` is time-major.
@@ -263,28 +263,28 @@ def get_eta_fn(config: ModelConfig):
   hidden_size = config.hidden_size
   memory_size = config.memory_size
 
-  def eta_fn(name: Tuple[str, ...], shape: Shape) -> Array:
+  def eta_fn(name: Tuple[str, ...], shape: Shape) -> ArrayLike:
     del shape  # Unused.
     if name[-4:] == ('lstm', 'cell', 'core', 'kernel'):
-      return math.pow(2 * hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
+      return math.pow(2 * hidden_size, -0.25)
 
     if name[-4:] == ('lstm', 'cell', 'normalize', 'shift'):
-      return 0.5  # pytype: disable=bad-return-type  # jax-ndarray
+      return 0.5
 
     if name[-4:] == ('lstm', 'cell', 'out', 'kernel'):
-      return math.pow(memory_size * hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
+      return math.pow(memory_size * hidden_size, -0.25)
 
     if name[-4:] == ('lstm', 'cell', 'out', 'bias'):
-      return 0.5 * math.pow(hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
+      return 0.5 * math.pow(hidden_size, -0.25)
 
     if name[-3:] == ('lstm', 'normalize', 'shift'):
-      return 0.5 * math.pow(hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
+      return 0.5 * math.pow(hidden_size, -0.25)
 
     if name[-2:] == ('embed', 'embedding'):
-      return math.pow(hidden_size, -0.25)  # pytype: disable=bad-return-type  # jax-ndarray
+      return math.pow(hidden_size, -0.25)
 
     if name[-1] == 'bias':
-      return 0.5  # pytype: disable=bad-return-type  # jax-ndarray
+      return 0.5
 
   return eta_fn
 
