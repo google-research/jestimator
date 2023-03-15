@@ -182,9 +182,6 @@ class DataIterable(object):
 
   def __iter__(self):
     ret = self.x.as_numpy_iterator()
-    if not jax.config.jax_array:
-      return ret
-
     mesh = self.partitioner.mesh
     spec = self.partitioner.data_partition_spec
     it = (host_local_array_to_global_array(batch, mesh, spec) for batch in ret)
