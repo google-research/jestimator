@@ -47,13 +47,13 @@ class ShiftNorm(nn.Module):
 
   @nn.compact
   def __call__(self, x: ArrayLike) -> ArrayLike:
-    shift = self.param('shift', nn.zeros, x.shape[-1], x.dtype)
+    shift = self.param('shift', nn.zeros, x.shape[-1], x.dtype)  # pytype: disable=attribute-error  # numpy-scalars
     x = x - shift
     x = x - jnp.mean(x, axis=-1, keepdims=True)
     mean2 = jnp.mean(jnp.square(x), axis=-1, keepdims=True)
 
     # Instead of normalize to 1, we normalize to d**(-0.25).
-    x = x * jax.lax.rsqrt(jnp.maximum(mean2 * math.sqrt(x.shape[-1]), 1.))
+    x = x * jax.lax.rsqrt(jnp.maximum(mean2 * math.sqrt(x.shape[-1]), 1.))  # pytype: disable=attribute-error  # numpy-scalars
     return x
 
 
@@ -127,8 +127,8 @@ class LstmLayer(nn.Module):
       Encoded sequence of the same shape as `xs`.
     """
     if init_carry is None:
-      batch_shape = xs.shape[:seq_axis] + xs.shape[seq_axis + 1:-1]
-      init_carry = self.zero_carry(batch_shape, xs.dtype)
+      batch_shape = xs.shape[:seq_axis] + xs.shape[seq_axis + 1:-1]  # pytype: disable=attribute-error  # numpy-scalars
+      init_carry = self.zero_carry(batch_shape, xs.dtype)  # pytype: disable=attribute-error  # numpy-scalars
 
     memory_mask = None
     if enable_dropout:
@@ -202,7 +202,7 @@ class SingleLstmLM(nn.Module):
                mode: str = 'train',
                length: Optional[ArrayLike] = None):
     """Generation logits/loss for batch-major sequence `y`."""
-    _, seq_length = y.shape
+    _, seq_length = y.shape  # pytype: disable=attribute-error  # numpy-scalars
     ty = jnp.transpose(y)  # `ty` is time-major.
 
     if mode == 'predict':
@@ -234,7 +234,7 @@ class SingleLstmLM(nn.Module):
       return logits
 
     if length is None:
-      size = jnp.asarray(y.size, x.dtype)
+      size = jnp.asarray(y.size, x.dtype)  # pytype: disable=attribute-error  # numpy-scalars
       mask = None
     else:
       size = jnp.sum(jnp.asarray(length, x.dtype))
@@ -284,7 +284,7 @@ def get_eta_fn(config: ModelConfig):
       return math.pow(hidden_size, -0.25)
 
     if name[-1] == 'bias':
-      return 0.5
+      return 0.5  # pytype: disable=bad-return-type  # numpy-scalars
 
   return eta_fn
 
