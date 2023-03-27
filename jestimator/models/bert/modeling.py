@@ -117,7 +117,7 @@ class EncoderBlock(nn.Module):
         all_hidden += (x,)
 
     if return_all_hidden:
-      return all_hidden
+      return all_hidden  # pytype: disable=bad-return-type  # numpy-scalars
     return x
 
 
@@ -293,7 +293,7 @@ class EmbedderBlock(nn.Module):
     """
     token_emb = self.token_embed(token_ids)
     if position_ids is None:
-      position_emb = self.position_embed.embedding[:token_ids.shape[-1]]
+      position_emb = self.position_embed.embedding[:token_ids.shape[-1]]  # pytype: disable=attribute-error  # numpy-scalars
     else:
       position_emb = self.position_embed(position_ids)
     if segment_ids is None:
@@ -350,7 +350,7 @@ class ModelForPretrain(nn.Module):
       mask_rate: float = 0.15,
       input_mask: Optional[ArrayLike] = None,
   ) -> Tuple[ArrayLike, ArrayLike]:
-    mask = jax.lax.rng_uniform(0.0, 1.0, token_ids.shape) < mask_rate
+    mask = jax.lax.rng_uniform(0.0, 1.0, token_ids.shape) < mask_rate  # pytype: disable=attribute-error  # numpy-scalars
     if input_mask is not None:
       mask = jnp.logical_and(mask, jnp.asarray(input_mask, bool))
     input_ids = jnp.where(mask, mask_token_id, token_ids)
@@ -414,14 +414,14 @@ class ModelForSeqCls(nn.Module):
   def xe_loss(self, labels: ArrayLike, input_ids: ArrayLike) -> ArrayLike:
     logits = self(input_ids)
     loss = sparse_xe_with_logits(labels, logits)
-    return normalize_loss_by_size(loss, labels.size)
+    return normalize_loss_by_size(loss, labels.size)  # type: ignore  # numpy-scalars
 
   @global_kwargs(pass_down=True)
   def mse_loss(self, labels: ArrayLike, input_ids: ArrayLike) -> ArrayLike:
     logits = self(input_ids)
     scores = jax.nn.softmax(logits)[..., 0]
     loss = jnp.sum(jnp.square(scores - labels))
-    return normalize_loss_by_size(loss, labels.size)
+    return normalize_loss_by_size(loss, labels.size)  # type: ignore  # numpy-scalars
 
 
 def to_attention_mask(input_mask: ArrayLike) -> ArrayLike:
@@ -436,7 +436,7 @@ class LayerNorm(nn.Module):
   @nn.compact
   def __call__(self, x: ArrayLike) -> ArrayLike:
     """Applies layer normalization on the input."""
-    hidden_size = x.shape[-1]
+    hidden_size = x.shape[-1]  # pytype: disable=attribute-error  # numpy-scalars
     x = x - jnp.mean(x, axis=-1, keepdims=True)
     mean2 = jnp.mean(jnp.square(x), axis=-1, keepdims=True)
     x = x * jax.lax.rsqrt(mean2 + self.epsilon)

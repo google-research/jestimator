@@ -63,8 +63,8 @@ def normalize_loss_by_size(
     loss: ArrayLike, size: ArrayLike
 ) -> Tuple[ArrayLike, ArrayLike]:
   """Normalize a loss value by size of labels."""
-  size = jnp.asarray(size, loss.dtype)
-  num_hosts = jnp.asarray(jax.process_count(), loss.dtype)
+  size = jnp.asarray(size, loss.dtype)  # pytype: disable=attribute-error  # numpy-scalars
+  num_hosts = jnp.asarray(jax.process_count(), loss.dtype)  # pytype: disable=attribute-error  # numpy-scalars
   loss = loss * jax.lax.rsqrt(size * num_hosts)
   size = jnp.sqrt(size / num_hosts)
   return loss, size
@@ -179,5 +179,5 @@ class Dropout(nn.Module):
     if self.rate == 1.0:
       return jnp.zeros_like(inputs)
 
-    mask = jax.lax.rng_uniform(0., 1., inputs.shape) < self.rate
+    mask = jax.lax.rng_uniform(0., 1., inputs.shape) < self.rate  # pytype: disable=attribute-error  # numpy-scalars
     return jnp.where(mask, 0., inputs / (1. - self.rate))
