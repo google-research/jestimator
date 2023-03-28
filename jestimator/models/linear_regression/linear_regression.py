@@ -62,6 +62,8 @@ linear_regression.py" \
   --logtostderr
 ```
 """
+from typing import Tuple
+
 from flax import linen as nn
 import jax
 import jax.numpy as jnp
@@ -141,14 +143,14 @@ class LinearRegression(nn.Module):
         kernel_axis_names=('x', 'y'))
     return linear(x)
 
-  def mse(self, x: ArrayLike, y: ArrayLike) -> ArrayLike:
+  def mse(self, x: ArrayLike, y: ArrayLike) -> Tuple[ArrayLike, ArrayLike]:
     """Mean squared error."""
     loss = jnp.mean(jnp.square(self(x) - y), axis=-1)
     size = jnp.asarray(loss.size, loss.dtype)
     num_hosts = jnp.asarray(jax.host_count(), loss.dtype)
     loss = jnp.sum(loss) * jax.lax.rsqrt(size * num_hosts)
     size = jnp.sqrt(size / num_hosts)
-    return loss, size  # pytype: disable=bad-return-type  # numpy-scalars
+    return loss, size
 
 
 def get_train_state(config, rng):
