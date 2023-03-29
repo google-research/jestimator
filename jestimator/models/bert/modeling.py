@@ -416,14 +416,14 @@ class ModelForSeqCls(nn.Module):
   def xe_loss(self, labels: ArrayLike, input_ids: ArrayLike) -> ArrayLike:
     logits = self(input_ids)
     loss = sparse_xe_with_logits(labels, logits)
-    return normalize_loss_by_size(loss, jnp.asarray(labels).size)
+    return normalize_loss_by_size(loss, jnp.asarray(labels).size)  # pytype: disable=bad-return-type  # numpy-scalars
 
   @global_kwargs(pass_down=True)
   def mse_loss(self, labels: ArrayLike, input_ids: ArrayLike) -> ArrayLike:
     logits = self(input_ids)
     scores = jax.nn.softmax(logits)[..., 0]
     loss = jnp.sum(jnp.square(scores - labels))
-    return normalize_loss_by_size(loss, jnp.asarray(labels).size)
+    return normalize_loss_by_size(loss, jnp.asarray(labels).size)  # pytype: disable=bad-return-type  # numpy-scalars
 
 
 def to_attention_mask(input_mask: ArrayLike) -> ArrayLike:
