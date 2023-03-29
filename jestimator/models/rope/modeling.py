@@ -1,4 +1,4 @@
-# Copyright 2022 The jestimator Authors.
+# Copyright 2023 The jestimator Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -415,17 +415,17 @@ class ModelForSeqCls(nn.Module):
     return logits
 
   @global_kwargs(pass_down=True)
-  def xe_loss(self, labels: ArrayLike, input_ids: ArrayLike) -> ArrayLike:
+  def xe_loss(self, labels: ArrayLike, input_ids: ArrayLike):
     logits = self(input_ids)
     loss = sparse_xe_with_logits(labels, logits)
-    return normalize_loss_by_size(loss, jnp.asarray(labels).size)  # pytype: disable=bad-return-type  # numpy-scalars
+    return normalize_loss_by_size(loss, jnp.asarray(labels).size)
 
   @global_kwargs(pass_down=True)
-  def mse_loss(self, labels: ArrayLike, input_ids: ArrayLike) -> ArrayLike:
+  def mse_loss(self, labels: ArrayLike, input_ids: ArrayLike):
     logits = self(input_ids)
     scores = jax.nn.softmax(logits)[..., 0]
     loss = jnp.sum(jnp.square(scores - labels))
-    return normalize_loss_by_size(loss, jnp.asarray(labels).size)  # pytype: disable=bad-return-type  # numpy-scalars
+    return normalize_loss_by_size(loss, jnp.asarray(labels).size)
 
 
 def to_attention_mask(input_mask: ArrayLike) -> ArrayLike:
