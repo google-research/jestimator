@@ -96,7 +96,9 @@ class InferState(struct.PyTreeNode):
       cls, model: nn.Module, *init_args, save_mutable=False, **init_kwargs
   ) -> 'InferState':
     """Creates a new state with model initialized."""
-    variables = model.init(jax.random.PRNGKey(0), *init_args, **init_kwargs)
+    variables = freeze(
+        model.init(jax.random.PRNGKey(0), *init_args, **init_kwargs)
+    )
     params, params_axes_, vars_, vars_axes_ = extract_axes(variables)
     return cls(
         step=jnp.array(0),
@@ -204,7 +206,7 @@ class TrainState(struct.PyTreeNode):
   ) -> 'TrainState':
     """Creates a new train state with model and optimizer initialized."""
     init_rng, state_rng = jax.random.split(rng)
-    variables = model.init(init_rng, *init_args, **init_kwargs)
+    variables = freeze(model.init(init_rng, *init_args, **init_kwargs))
     params, params_axes_, vars_, vars_axes_ = extract_axes(variables)
     opt_state = optimizer.init(params)
     return cls(
