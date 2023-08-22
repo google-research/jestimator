@@ -72,7 +72,7 @@ def extract_axes(variables: FrozenDict[str, Any]):
   return params, params_axes_, vars_, vars_axes_
 
 
-class InferState(struct.PyTreeNode):
+class InferState(struct.PyTreeNode):  # pytype: disable=invalid-function-definition  # dataclass_transform
   """State for inference, with support for partitioning."""
   step: ArrayLike
   apply_fn: Callable = struct.field(pytree_node=False)  # pylint: disable=g-bare-generic
@@ -134,7 +134,7 @@ class InferState(struct.PyTreeNode):
         step=None, params=self._params_axes, _vars=self._vars_axes)
 
 
-class TrainState(struct.PyTreeNode):
+class TrainState(struct.PyTreeNode):  # pytype: disable=invalid-function-definition  # dataclass_transform
   """Train state compatible with T5X partitioning and checkpointing.
 
   Attributes:
