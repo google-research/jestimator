@@ -33,7 +33,7 @@ import optax
 from t5x.utils import get_local_data
 from tensorflow.io import gfile
 
-PRNGKey = jax.random.KeyArray
+PRNGKey = jax.Array
 
 
 def extract_axes(variables: FrozenDict[str, Any]):
