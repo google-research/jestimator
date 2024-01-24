@@ -16,6 +16,7 @@
 import math
 
 from absl.testing import absltest
+import jax
 from jestimator import amos_helper
 
 

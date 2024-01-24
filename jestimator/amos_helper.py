@@ -21,8 +21,8 @@ from typing import Any, Dict, Tuple
 
 from absl import logging
 import jax
-from jax.sharding import PartitionSpec
-from jestimator.amos import Shape, ParamsFn, ScaleByAmosState  # pylint: disable=g-multiple-import
+from jax.sharding import PartitionSpec  # pylint: disable=g-importing-member
+from jestimator.amos import ParamsFn, ScaleByAmosState, Shape  # pylint: disable=g-multiple-import,g-importing-member
 import numpy
 
 _BIN_OP_MAP = {
