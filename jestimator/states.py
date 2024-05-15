@@ -62,10 +62,10 @@ def extract_axes(variables: FrozenDict[str, Any]):
     else:
       vars_[k] = v
   if params_axes_ is None:
-    params_axes_ = jax.tree_map(lambda _: None, params)
+    params_axes_ = jax.tree.map(lambda _: None, params)
   for k, v in vars_.items():
     if k not in vars_axes_:
-      vars_axes_[k] = jax.tree_map(lambda _: None, v)
+      vars_axes_[k] = jax.tree.map(lambda _: None, v)
 
   vars_ = FrozenDict(vars_)
   vars_axes_ = FrozenDict(vars_axes_)
@@ -307,7 +307,7 @@ class TrainState(struct.PyTreeNode):  # pytype: disable=invalid-function-definit
         step=None,
         params=self._params_axes,
         _vars=self._vars_axes,
-        opt_state=jax.tree_map(
+        opt_state=jax.tree.map(
             to_axes, self.opt_state, is_leaf=lambda x: to_axes(x) is not None))
 
 

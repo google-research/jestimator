@@ -358,7 +358,7 @@ def get_eval_fn(eval_ds, eval_steps, last_size, infer_fn, evaluator):
         state = state.replace(ret=None)
         gold, infer = process_allgather((gold, infer), tiled=True)
         if i == eval_steps - 1:  # Last batch.
-          gold, infer = jax.tree_map(lambda v: v[:last_size], (gold, infer))
+          gold, infer = jax.tree.map(lambda v: v[:last_size], (gold, infer))
         evaluator.update_state(gold, infer)
     next(eval_iter, None)
 
@@ -457,7 +457,7 @@ def predict(pred_ds, pred_steps, last_size, infer_fn, state, predictor):
       state = state.replace(ret=None)
       infer = process_allgather(infer, tiled=True)
       if i == pred_steps - 1:  # Last batch.
-        infer = jax.tree_map(lambda v: v[:last_size], infer)
+        infer = jax.tree.map(lambda v: v[:last_size], infer)
       predictor.consume(infer)
   next(pred_iter, None)
   predictor.complete()

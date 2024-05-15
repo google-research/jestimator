@@ -145,5 +145,5 @@ def state_partition_rule(state: ScaleByAmosState, params_axes):
   """Creates partition for Amos states from partition of parameters."""
   return ScaleByAmosState(
       count=None,
-      v=jax.tree_map(maybe_reduce_axis_names, state.v, params_axes),
-      b=jax.tree_map(maybe_reduce_axis_names, state.b, params_axes))
+      v=jax.tree.map(maybe_reduce_axis_names, state.v, params_axes),
+      b=jax.tree.map(maybe_reduce_axis_names, state.b, params_axes))
